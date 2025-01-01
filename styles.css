@@ -62,6 +62,7 @@ footer { text-align: center; color: var(--muted); }
   background: #0f141b; 
   border: 1px solid var(--outline); 
   border-radius: 10px; 
+  contain: layout paint;
 }
 
 #chart-categories {
@@ -72,6 +73,7 @@ footer { text-align: center; color: var(--muted); }
   border: 1px solid var(--outline);
   border-radius: 10px;
   margin-top: 8px;
+  contain: layout paint;
 }
 
 /* Единообразные стили для остальных графиков */
@@ -82,6 +84,7 @@ footer { text-align: center; color: var(--muted); }
   background: #0f141b;
   border: 1px solid var(--outline);
   border-radius: 10px;
+  contain: layout paint;
 }
 
 #chart-donut {
@@ -93,6 +96,29 @@ footer { text-align: center; color: var(--muted); }
   border-radius: 10px;
   /* мягкая внешняя тень для глубины */
   filter: drop-shadow(0 10px 24px rgba(0,0,0,0.35));
+  contain: layout paint;
+}
+
+/* Скрытие графиков без перерасчёта макета */
+.chart-hidden {
+  display: none !important;
+}
+
+/* Единый стиль тултипов для графиков */
+.chart-tooltip {
+  position: fixed;
+  z-index: 1000;
+  pointer-events: none;
+  background: rgba(255,255,255,0.95);
+  color: #0b0f14;
+  border: 1px solid rgba(0,0,0,0.15);
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu;
+  font-weight: 600;
+  font-size: 12px;
+  box-shadow: 0 8px 20px rgba(0,0,0,0.25);
+  opacity: 0;
 }
 
 .hint { color: var(--muted); }
@@ -109,6 +135,9 @@ footer { text-align: center; color: var(--muted); }
 .admin-bar { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
 .chip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--outline); background: var(--primary-glass); color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Courier New", monospace; font-size: 12px; }
 .chip strong { color: #1a1c20; background: rgba(255,255,255,0.6); padding: 0 4px; border-radius: 4px; }
+/* Фиксированная ширина поля статуса синхронизации, чтобы текст (idle/ok/pushing)
+   не менял размер ячейки и не смещал панель. Ширина под слово "pushing". */
+#status-sync { display: inline-block; min-width: 8ch; text-align: center; }
 /* Цветовые варианты для чипов статуса сумм */
 .chip strong.pos { color: var(--success); background: rgba(16, 185, 129, 0.15); }
 .chip strong.neg { color: var(--danger); background: rgba(226, 85, 85, 0.15); }
@@ -176,18 +205,26 @@ button.primary:hover { filter: brightness(1.05); box-shadow: 0 0 0 2px rgba(37, 
 /* Диалоговые окна */
 .modal-panel { background: var(--surface); color: var(--text); padding: 20px; border-radius: 12px; box-shadow: 0 12px 28px rgba(0,0,0,0.35); border: 1px solid var(--outline); }
 dialog.modal-panel {
-  margin: auto;
+  margin: 0;
   width: min(680px, 92vw);
   max-width: 92vw;
-  max-height: 80vh;
+  max-height: 84vh;
   overflow: auto;
 }
 dialog[open].modal-panel,
 dialog.modal-panel.is-open {
   position: fixed;
+  z-index: 1000;
   left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
+  top: 10vh;
+  transform: translateX(-50%);
+}
+@media (max-width: 640px) {
+  dialog[open].modal-panel,
+  dialog.modal-panel.is-open {
+    top: 8vh;
+    max-height: 84vh;
+  }
 }
 dialog::backdrop { background: rgba(12,17,23,0.6); }
 
@@ -198,3 +235,56 @@ dialog::backdrop { background: rgba(12,17,23,0.6); }
 /* Сглаживание общего вида кнопок */
 button.primary { background: #1f2937; border-color: #374151; color: #e5e7eb; }
 button.primary:hover { filter: brightness(1.04); box-shadow: 0 0 0 2px rgba(55, 65, 81, 0.25) inset; }
+
+/* ---------- Мобильная адаптация ---------- */
+@media (max-width: 768px) {
+  header, footer { padding: 12px; }
+  main { padding: 12px; }
+  .brand-row { gap: 8px; }
+  .titles h1 { font-size: 20px; }
+  .titles p { font-size: 12px; }
+
+  .admin-bar { gap: 6px; }
+  .chip { padding: 4px 8px; font-size: 11px; }
+  .icon-btn { width: 36px; height: 36px; }
+}
+
+@media (max-width: 560px) {
+  .brand-row { flex-direction: column; align-items: flex-start; }
+  .crest { width: 36px; height: 36px; }
+
+  /* Панель управления в шапке */
+  .admin-bar { overflow-x: auto; padding-bottom: 6px; }
+  .chip { white-space: nowrap; }
+
+  /* Компактные элементы управления */
+  .admin-controls { display: grid !important; grid-template-columns: 1fr 1fr; gap: 6px; }
+  #auth-panel, #auth-user { width: 100%; }
+  #auth-panel input, #auth-panel button, #auth-user button { width: 100%; }
+  .admin-controls select, .admin-controls button { width: 100%; }
+
+  /* Формы и блоки */
+  .row { flex-direction: column; align-items: stretch; gap: 8px; }
+  .add-form .row, .filters .row, .summary .row { flex-direction: column; }
+  input, select, button { font-size: 14px; }
+  input[type=date] { min-width: 0; width: 100%; }
+  .actions { justify-content: space-between; }
+  button, .icon-btn { min-height: 40px; }
+
+  /* Списки транзакций */
+  li.item { grid-template-columns: 1fr; }
+  .item .actions { justify-content: flex-end; }
+
+  /* Тикер */
+  .ticker .marquee { gap: 12px; padding: 6px 10px; }
+  .ticker .tick { padding-left: 8px; font-size: 13px; }
+
+  /* Графики: ниже высота на телефонах */
+  #chart-monthly { height: 180px; }
+  #chart-categories { height: 220px; }
+  #chart-balance { height: 180px; }
+  #chart-donut { height: 220px; }
+
+  /* Карточки и гриды в одну колонку */
+  .grid { grid-template-columns: 1fr; }
+}

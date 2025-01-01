@@ -1,29 +1,48 @@
 export function setCategories(selects, categories) {
   for (const sel of selects) {
+    const prev = sel.value;
     sel.innerHTML = '';
-    const allOpt = sel.id === 'filter-category'
-      ? new Option('Все', '')
-      : null;
+    const isFilter = sel.id === 'filter-category';
+    const allOpt = isFilter ? new Option('Все', '') : null;
     if (allOpt) sel.appendChild(allOpt);
     for (const c of categories) sel.appendChild(new Option(c, c));
+    // Восстанавливаем предыдущий выбор, если он всё ещё доступен
+    try {
+      const canRestore = (prev === '' && isFilter) || categories.includes(prev);
+      if (canRestore) sel.value = prev; else if (isFilter) sel.value = '';
+    } catch {}
   }
 }
 
 export function setMembers(selects, members) {
   for (const sel of selects) {
+    const prev = sel.value;
     sel.innerHTML = '';
-    const allOpt = sel.id === 'filter-member' ? new Option('Все', '') : null;
+    const isFilter = sel.id === 'filter-member';
+    const allOpt = isFilter ? new Option('Все', '') : null;
     if (allOpt) sel.appendChild(allOpt);
     for (const m of members) sel.appendChild(new Option(m, m));
+    // Восстанавливаем предыдущий выбор, если он всё ещё доступен
+    try {
+      const canRestore = (prev === '' && isFilter) || members.includes(prev);
+      if (canRestore) sel.value = prev; else if (isFilter) sel.value = '';
+    } catch {}
   }
 }
 
 export function setSources(selects, sources) {
   for (const sel of selects) {
+    const prev = sel.value;
     sel.innerHTML = '';
-    const allOpt = sel.id === 'filter-source' ? new Option('Все', '') : null;
+    const isFilter = sel.id === 'filter-source';
+    const allOpt = isFilter ? new Option('Все', '') : null;
     if (allOpt) sel.appendChild(allOpt);
     for (const s of sources) sel.appendChild(new Option(s, s));
+    // Восстанавливаем предыдущий выбор, если он всё ещё доступен
+    try {
+      const canRestore = (prev === '' && isFilter) || sources.includes(prev);
+      if (canRestore) sel.value = prev; else if (isFilter) sel.value = '';
+    } catch {}
   }
 }
 
@@ -44,9 +63,13 @@ export function clearForm() {
 
 export function renderList(items, { onDelete, onEdit }) {
   const ul = document.getElementById('transactions');
+  // Сохраняем раскрытые элементы, чтобы восстановить после перерисовки
+  const openIds = new Set(Array.from(ul.querySelectorAll('details[open]')).map(d => d.dataset.id));
   ul.innerHTML = '';
   for (const it of items) {
     const li = document.createElement('details');
+    // Привяжем id записи к элементу
+    li.dataset.id = String(it.id);
     li.className = `item ${it.type}`;
     li.innerHTML = `
       <summary>
@@ -67,6 +90,10 @@ export function renderList(items, { onDelete, onEdit }) {
     `;
     li.querySelector('.del-btn').onclick = () => onDelete(it.id);
     li.querySelector('.edit-btn').onclick = () => onEdit(it);
+    // Восстановим состояние раскрытия
+    if (openIds.has(String(it.id))) {
+      try { li.setAttribute('open', ''); } catch {}
+    }
     ul.appendChild(li);
   }
 }

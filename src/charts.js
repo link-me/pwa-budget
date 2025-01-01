@@ -54,15 +54,18 @@ try { if (typeof Chart !== 'undefined') Chart.register(CenterTextPlugin); } catc
 
 function ensureChart(canvas, cfg) {
   if (!canvas || typeof Chart === 'undefined') return null;
-  // Зафиксируем размеры графика из CSS, отключим внутренний ресайз Chart.js
+  // Зафиксируем размеры графика из CSS один раз, отключим внутренний ресайз Chart.js
   try {
-    const rect = canvas.getBoundingClientRect();
-    // Устанавливаем реальный размер холста из вычисленных размеров элемента
-    if (rect && rect.width && rect.height) {
-      canvas.style.width = rect.width + 'px';
-      canvas.style.height = rect.height + 'px';
-      canvas.width = Math.max(1, Math.round(rect.width * (window.devicePixelRatio || 1)));
-      canvas.height = Math.max(1, Math.round(rect.height * (window.devicePixelRatio || 1)));
+    if (!canvas.__chartSized) {
+      const rect = canvas.getBoundingClientRect();
+      // Устанавливаем реальный размер холста из вычисленных размеров элемента
+      if (rect && rect.width && rect.height) {
+        canvas.style.width = rect.width + 'px';
+        canvas.style.height = rect.height + 'px';
+        canvas.width = Math.max(1, Math.round(rect.width * (window.devicePixelRatio || 1)));
+        canvas.height = Math.max(1, Math.round(rect.height * (window.devicePixelRatio || 1)));
+      }
+      canvas.__chartSized = true;
     }
   } catch {}
   cfg.options = cfg.options || {};
@@ -77,7 +80,8 @@ function ensureChart(canvas, cfg) {
     c.type = cfg.type;
     c.data = cfg.data;
     c.options = cfg.options;
-    c.update('active');
+    // Обновление без анимации, чтобы избежать «дёрганья» при частых изменениях
+    c.update('none');
   }
   return canvas.__chart;
 }
@@ -101,6 +105,13 @@ export function drawMonthlyChart(canvas, items) {
   const labels = labelsYm.map(fmtMonthLabel);
   const dataIn = labelsYm.map((l) => byMonth.get(l).income);
   const dataEx = labelsYm.map((l) => byMonth.get(l).expense);
+
+  // Пропускаем перерисовку при неизменных данных
+  try {
+    const sig = JSON.stringify({ labelsYm, dataIn, dataEx });
+    if (canvas.__sigMonthly === sig) return;
+    canvas.__sigMonthly = sig;
+  } catch {}
 
   const cfg = {
     type: 'bar',
@@ -148,6 +159,13 @@ export function drawCategoryChart(canvas, items) {
   const labels = rows.map(r => r[0]);
   const values = rows.map(r => r[1]);
 
+  // Пропускаем перерисовку при неизменных данных
+  try {
+    const sig = JSON.stringify({ labels, values });
+    if (canvas.__sigCategories === sig) return;
+    canvas.__sigCategories = sig;
+  } catch {}
+
   const cfg = {
     type: 'bar',
     data: { labels, datasets: [{ label: 'Расход', data: values, backgroundColor: '#ef4444', borderRadius: 6 }] },
@@ -166,16 +184,24 @@ export function drawCategoryChart(canvas, items) {
         tooltip: { enabled: false },
         datalabels: {
           anchor: 'end',
-          align: 'end',
+          align: (ctx) => {
+            const ds = ctx.chart.data.datasets[0].data;
+            const v = ds[ctx.dataIndex] || 0;
+            const total = ds.reduce((a,b)=>a+b,0) || 1;
+            const frac = v / total;
+            return frac < 0.1 ? 'center' : 'end';
+          },
           color: '#e6e8ea',
           formatter: (v, ctx) => {
             if (v == null) return '';
             const total = ctx.chart.data.datasets[0].data.reduce((a, b) => a + b, 0) || 1;
             const pct = Math.round((v / total) * 100);
-            return `${Math.round(v)} (${pct}%)`;
+            // Перенос процентов на новую строку, чтобы не выходили за край
+            return `${Math.round(v)}\n(${pct}%)`;
           },
-          offset: -6, // тянем подпись внутрь столбца, чтобы не вылезала
+          offset: -4,
           clamp: true,
+          clip: true,
         },
       },
       // Выключаем любые hover-события внутри Chart.js, чтобы не было перерисовок
@@ -211,6 +237,57 @@ export function drawCategoryChart(canvas, items) {
     });
     canvas.__bars = bars;
   } catch {}
+
+  // Навешиваем внешний тултип: показываем данные при наведении
+  try {
+    if (!canvas.__tooltipBound) {
+      canvas.__tooltipBound = true;
+      const el = ensureTooltipEl();
+      const onMove = (evt) => {
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / Math.max(1, rect.width);
+        const scaleY = canvas.height / Math.max(1, rect.height);
+        const px = (evt.clientX - rect.left) * scaleX;
+        const py = (evt.clientY - rect.top) * scaleY;
+        const bars = canvas.__bars || [];
+        let hit = null;
+        for (const b of bars) {
+          if (px >= b.x && px <= (b.x + b.w) && py >= b.y && py <= (b.y + b.h)) { hit = b; break; }
+        }
+        if (!hit) { el.style.opacity = '0'; return; }
+        el.innerHTML = `${hit.label}: <strong>${Math.round(hit.value)}</strong> (${hit.pct}%)`;
+        el.style.opacity = '1';
+        const pad = 8;
+        const maxLeft = rect.right - el.offsetWidth - pad;
+        const minLeft = rect.left + pad;
+        const maxTop = rect.bottom - el.offsetHeight - pad;
+        const minTop = rect.top + pad;
+        let left = Math.min(maxLeft, Math.max(minLeft, evt.clientX + 12));
+        let top = Math.min(maxTop, Math.max(minTop, evt.clientY - 10));
+        el.style.left = `${left}px`;
+        el.style.top = `${top}px`;
+      };
+      const onLeave = () => { el.style.opacity = '0'; };
+      canvas.addEventListener('mousemove', onMove);
+      canvas.addEventListener('mouseleave', onLeave);
+    }
+  } catch {}
+}
+
+// Создаём/получаем элемент тултипа для графиков
+function ensureTooltipEl() {
+  let el = document.getElementById('chart-tooltip');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'chart-tooltip';
+    el.className = 'chart-tooltip';
+    el.style.position = 'fixed';
+    el.style.zIndex = '100';
+    el.style.pointerEvents = 'none';
+    el.style.opacity = '0';
+    document.body.appendChild(el);
+  }
+  return el;
 }
 
 export function drawBalanceChart(canvas, items) {
@@ -226,6 +303,13 @@ export function drawBalanceChart(canvas, items) {
   const dates = Array.from(byDay.keys()).sort();
   let bal = 0;
   const series = dates.map(d => { const v = byDay.get(d); bal += (v.inc - v.exp); return bal; });
+
+  // Пропускаем перерисовку при неизменных данных
+  try {
+    const sig = JSON.stringify({ dates, series });
+    if (canvas.__sigBalance === sig) return;
+    canvas.__sigBalance = sig;
+  } catch {}
 
   const cfg = {
     type: 'line',
@@ -256,6 +340,13 @@ export function drawDonutChart(canvas, items, dimension = 'category') {
 
   const palette = ['#ef4444','#f59e0b','#22c55e','#3b82f6','#a855f7','#14b8a6','#eab308','#f97316','#10b981','#6366f1'];
   const colors = labels.map((_, i) => palette[i % palette.length]);
+
+  // Пропускаем перерисовку при неизменных данных
+  try {
+    const sig = JSON.stringify({ dimension, labels, values });
+    if (canvas.__sigDonut === sig) return;
+    canvas.__sigDonut = sig;
+  } catch {}
 
   const cfg = {
     type: 'doughnut',

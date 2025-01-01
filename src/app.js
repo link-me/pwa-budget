@@ -1,7 +1,7 @@
-import { addTransaction, getAllTransactions, deleteTransaction, clearTransactions, exportToJSON, importFromJSON, getMetaLocal, addCategory, renameCategory, deleteCategoryMeta, addMember, renameMember, deleteMemberMeta, addSource, renameSource, deleteSourceMeta, saveMetaLocal, updateTransaction } from './db.js';
+import { addTransaction, getAllTransactions, getTransactionById, deleteTransaction, removeTransaction, clearTransactions, exportToJSON, importFromJSON, getMetaLocal, addCategory, renameCategory, deleteCategoryMeta, addMember, renameMember, deleteMemberMeta, addSource, renameSource, deleteSourceMeta, saveMetaLocal, updateTransaction } from './db.js?v=51';
 import { setCategories, setMembers, setSources, readForm, clearForm, renderList, renderSummary } from './ui.js';
-import * as charts from './charts.js?v=7';
-import { pullTransactions, pushTransactions, getMeta, register, login, me, getBudgets, createBudget, inviteMember, acceptInvite, updateBudget, subscribeEvents } from './sync.js?v=5';
+import * as charts from './charts.js?v=51';
+import { pullTransactions, pushTransactions, getMeta, register, login, me, getBudgets, createBudget, inviteMember, acceptInvite, updateBudget, subscribeEvents, deleteServerTransaction, getSettings, putSettings, getBudgetMeta, putBudgetMeta } from './sync.js?v=51';
 
 const DEFAULT_CATEGORIES = ['Продукты', 'Транспорт', 'Кафе', 'Доход', 'Другое'];
 const DEFAULT_MEMBERS = ['Семья', 'Я', 'Партнёр'];
@@ -15,6 +15,8 @@ function filterItems(items) {
   const to = document.getElementById('filter-to').value || '9999-12-31';
   const activeBudgetId = Number(localStorage.getItem('activeBudgetId')) || null;
   return items.filter((it) => {
+    // скрываем мягко удалённые элементы
+    if (it.deletedAt) return false;
     const okCat = !cat || it.category === cat;
     const okMember = !member || it.member === member;
     const okSource = !source || it.source === source;
@@ -24,15 +26,20 @@ function filterItems(items) {
   });
 }
 
-async function refresh() {
+async function refresh(opts) {
+  const force = !!(opts && opts.force);
+  const skipList = !!(opts && opts.skipList);
   const items = await getAllTransactions();
   const filtered = filterItems(items);
-  renderList(filtered, { onDelete: handleDelete, onEdit: handleEdit });
+  // Если открыт какой-либо элемент, не перерисовываем список, чтобы не закрывать меню
+  const ul = document.getElementById('transactions');
+  const hasOpen = !!ul?.querySelector('details[open]');
+  if (!skipList && (!hasOpen || force)) {
+    renderList(filtered, { onDelete: handleDelete, onEdit: handleEdit });
+  }
   renderSummary(filtered);
-  charts.drawMonthlyChart(document.getElementById('chart-monthly'), filtered);
-  charts.drawCategoryChart(document.getElementById('chart-categories'), filtered);
-  attachChartTooltip(document.getElementById('chart-monthly'));
-  attachChartTooltip(document.getElementById('chart-categories'));
+  // Рендер графиков перенесён в extra.js (единая точка, без дублирования)
+  // Здесь только считаем итоговые индикаторы и уведомляем про обновление данных.
   // update admin bar record count
   const countEl = document.getElementById('status-count');
   if (countEl) countEl.textContent = String(filtered.length);
@@ -87,6 +94,167 @@ function updateLastSynced() {
   }
 }
 
+// --- Локальная очистка данных бюджета по имени ---
+async function removeBudgetLocalByName(name, opts) {
+  const hard = !!(opts && opts.hard === true); // по умолчанию мягкое удаление с tombstone
+  try {
+    let targetId = null;
+    try {
+      const budgets = await getBudgets().catch(() => []);
+      const target = (budgets || []).find(b => String(b?.name || '').toLowerCase() === String(name || '').toLowerCase());
+      if (target && target.id != null) targetId = Number(target.id);
+    } catch {}
+    if (!targetId) {
+      const active = Number(localStorage.getItem('activeBudgetId') || 0) || null;
+      targetId = active;
+    }
+    if (!targetId) { console.warn('Не удалось определить budgetId для локального удаления'); return 0; }
+    const items = await getAllTransactions();
+    let removed = 0;
+    for (const it of items) {
+      if (Number(it.budgetId || 0) === targetId) {
+        if (hard) {
+          await removeTransaction(it.id);
+        } else {
+          it.deletedAt = it.deletedAt || Date.now();
+          await updateTransaction(it);
+        }
+        removed++;
+      }
+    }
+    try {
+      const active = Number(localStorage.getItem('activeBudgetId')) || null;
+      if (active === targetId) localStorage.removeItem('activeBudgetId');
+    } catch {}
+    await refresh({ force: true });
+    try { window.dispatchEvent(new CustomEvent('transactions-updated')); } catch {}
+    console.log(`Локально удалено записей: ${removed} для budgetId=${targetId}`);
+    return removed;
+  } catch (e) {
+    console.warn('Ошибка локального удаления бюджета по имени', e);
+    return -1;
+  }
+}
+try { window.removeBudgetLocal = removeBudgetLocalByName; } catch {}
+
+// --- Авто‑синхронизация и realtime (SSE) ---
+// Разовый pull: подтянуть активный бюджет с сервера и обновить локальную БД
+async function doPullOnce() {
+  try {
+    if (getMode() !== 'server') return;
+    const token = localStorage.getItem('authToken');
+    const budgetId = Number(localStorage.getItem('activeBudgetId'));
+    if (!token || !budgetId) return;
+    const syncEl = document.getElementById('status-sync');
+    if (syncEl) syncEl.textContent = 'pulling';
+    const items = await pullTransactions();
+    const blob = new Blob([JSON.stringify(items)], { type: 'application/json' });
+    await importFromJSON(new File([blob], 'remote.json'));
+    await refresh();
+    updateLastSynced();
+    // Загрузим и применим метаданные для активного бюджета из настроек аккаунта
+    await syncBudgetMetaDown();
+    if (syncEl) syncEl.textContent = 'ok';
+  } catch (e) {
+    console.warn('auto pull failed', e);
+  }
+}
+
+// Дебаунс‑push локальных изменений (включая tombstones)
+let __pushTimer = null;
+async function doAutoPushNow() {
+  try {
+    if (getMode() !== 'server') return;
+    const token = localStorage.getItem('authToken');
+    const budgetId = Number(localStorage.getItem('activeBudgetId'));
+    if (!token || !budgetId) return;
+    const syncEl = document.getElementById('status-sync');
+    if (syncEl) syncEl.textContent = 'pushing';
+    const items = await getAllTransactions();
+    const toSend = Array.isArray(items) ? items.filter((it) => it.origin !== 'server' || it.deletedAt) : [];
+    const result = await pushTransactions(toSend);
+    const { created = [], duplicates = [], updated = [], mapping = [] } = result || {};
+    const serverItems = [...created, ...duplicates, ...updated];
+    try {
+      for (const map of mapping) { if (map?.clientId != null) { try { await removeTransaction(map.clientId); } catch {} } }
+      if (Array.isArray(serverItems) && serverItems.length) {
+        const blob = new Blob([JSON.stringify(serverItems)], { type: 'application/json' });
+        await importFromJSON(new File([blob], 'server-push.json'));
+      }
+    } catch {}
+    updateLastSynced();
+    if (syncEl) syncEl.textContent = 'ok';
+  } catch (e) {
+    console.warn('auto push failed', e);
+  }
+}
+function scheduleAutoPush() {
+  try { if (__pushTimer) clearTimeout(__pushTimer); } catch {}
+  __pushTimer = setTimeout(() => { doAutoPushNow(); }, 800);
+}
+
+// Запуск периодического pull
+function startAutoSync() {
+  try { if (window.__pullInterval) clearInterval(window.__pullInterval); } catch {}
+  if (getMode() !== 'server') return;
+  const token = localStorage.getItem('authToken');
+  const budgetId = Number(localStorage.getItem('activeBudgetId'));
+  if (!token || !budgetId) return;
+  window.__pullInterval = setInterval(() => { doPullOnce(); }, 5000);
+}
+
+// Периодическая синхронизация метаданных бюджета (категории/члены/источники)
+function startMetaAutoSync() {
+  try { if (window.__metaInterval) clearInterval(window.__metaInterval); } catch {}
+  if (getMode() !== 'server') return;
+  const token = localStorage.getItem('authToken');
+  const budgetId = Number(localStorage.getItem('activeBudgetId'));
+  if (!token || !budgetId) return;
+  // Лёгкий периодический опрос метаданных для быстрого распространения правок
+  window.__metaInterval = setInterval(() => { try { syncBudgetMetaDown(); } catch {} }, 5000);
+}
+
+// Реалтайм через SSE: подписка на события бюджета и триггер pull
+function startRealtime() {
+  try { if (window.__eventsSub?.close) window.__eventsSub.close(); } catch {}
+  if (getMode() !== 'server') return;
+  const token = localStorage.getItem('authToken');
+  const budgetId = Number(localStorage.getItem('activeBudgetId'));
+  if (!token || !budgetId) return;
+  const syncEl = document.getElementById('status-sync');
+  try {
+    const es = subscribeEvents(budgetId);
+    window.__eventsSub = es;
+    es.addEventListener('hello', () => { if (syncEl) syncEl.textContent = 'listening'; });
+    es.addEventListener('update', async (ev) => {
+      try {
+        const data = JSON.parse(ev?.data || '{}');
+        // Мгновенное скрытие удалённой записи на всех клиентах
+        if (data?.op === 'soft_delete' && data?.id != null) {
+          try { await deleteTransaction(Number(data.id)); } catch {}
+          // Удаляем элемент из списка без полной перерисовки
+          try {
+            const ul = document.getElementById('transactions');
+            const el = ul?.querySelector(`details[data-id="${String(data.id)}"]`);
+            if (el && el.parentNode) el.parentNode.removeChild(el);
+          } catch {}
+          await refresh({ skipList: true });
+          // Обновить графики сразу при получении события soft_delete
+          try { if (window.scheduleRefreshCharts) window.scheduleRefreshCharts(80); } catch {}
+        } else {
+          doPullOnce();
+        }
+      } catch {
+        doPullOnce();
+      }
+    });
+    es.addEventListener('ping', async () => { try { await syncBudgetMetaDown(); } catch {} });
+    es.onerror = () => { /* восстановление произойдёт при смене бюджета/режима */ };
+  } catch (e) {
+    console.warn('sse subscribe failed', e);
+  }
+}
+
 async function handleSubmit(e) {
   e.preventDefault();
   const data = readForm();
@@ -108,8 +276,72 @@ async function handleSubmit(e) {
 }
 
 async function handleDelete(id) {
-  await deleteTransaction(id);
-  await refresh();
+  try {
+    // Сохраним данные записи до удаления, чтобы можно было найти её на сервере по содержимому
+    let before = null;
+    try { before = await getTransactionById(id); } catch {}
+    // Мгновенно скрываем локально (soft delete)
+    await deleteTransaction(id);
+    // Удаляем элемент из списка без полной перерисовки, чтобы не закрывать другие открытые details
+    try {
+      const ul = document.getElementById('transactions');
+      const el = ul?.querySelector(`details[data-id="${String(id)}"]`);
+      if (el && el.parentNode) el.parentNode.removeChild(el);
+    } catch {}
+    await refresh({ skipList: true });
+    // Явно инициируем пересчёт графиков, чтобы суммы обновились сразу
+    try { if (window.scheduleRefreshCharts) window.scheduleRefreshCharts(80); } catch {}
+    // Если онлайн режим — пробуем удалить на сервере сразу.
+    // Не полагаемся на origin (может не определиться из-за типа ключа),
+    // а просто пытаемся DELETE по серверному id; при 404/ошибке делаем tombstone push.
+    if (getMode() === 'server') {
+      const token = localStorage.getItem('authToken');
+      const budgetId = Number(localStorage.getItem('activeBudgetId'));
+      if (token && budgetId) {
+        try {
+          await deleteServerTransaction(Number(id));
+          // Успешное удаление: сразу подтянем актуальные данные для всех клиентов
+          try { doPullOnce(); } catch {}
+          try { if (window.scheduleRefreshCharts) window.scheduleRefreshCharts(80); } catch {}
+        } catch (err) {
+          console.warn('server delete failed, fallback to push tombstone', err);
+          // Фоллбек: отправим tombstone (deletedAt) на сервер пакетом
+          scheduleAutoPush();
+          try { if (window.scheduleRefreshCharts) window.scheduleRefreshCharts(120); } catch {}
+          // Дополнительный фоллбек: попробуем найти серверную запись по содержимому и удалить её
+          try {
+            if (before) {
+              const serverItems = await pullTransactions();
+              const eq = (a, b) => String(a||'').toLowerCase() === String(b||'').toLowerCase();
+              const baseSame = (
+                eq(srv.type, before.type) &&
+                Number(srv.amount) === Number(before.amount) &&
+                eq(srv.category, before.category) &&
+                eq(srv.member, before.member) &&
+                eq(srv.source, before.source) &&
+                eq(srv.date, before.date) &&
+                eq(srv.note, before.note) &&
+                Number(srv.budgetId) === Number(budgetId)
+              );
+              const createdMatch = (srv.createdAt != null && before.createdAt != null) ? Number(srv.createdAt) === Number(before.createdAt) : false;
+              const timeMatch = (srv.time && before.time) ? eq(srv.time, before.time) : false;
+              const isSame = baseSame && (createdMatch || timeMatch);
+              const candidates = Array.isArray(serverItems) ? serverItems.filter(isSame) : [];
+              for (const c of candidates) {
+                try { await deleteServerTransaction(Number(c.id)); } catch {}
+              }
+              if (candidates.length) { try { doPullOnce(); } catch {} }
+              try { if (window.scheduleRefreshCharts) window.scheduleRefreshCharts(120); } catch {}
+            }
+          } catch {}
+        }
+      } else {
+        // Нет авторизации/активного бюджета — просто отправим tombstone позже
+        scheduleAutoPush();
+        try { if (window.scheduleRefreshCharts) window.scheduleRefreshCharts(120); } catch {}
+      }
+    }
+  } catch (e) { console.error(e); }
 }
 
 function fillForm(it) {
@@ -205,6 +437,7 @@ export async function initApp() {
           setCategories([document.getElementById('category'), document.getElementById('filter-category')], updated.categories);
           setMembers([document.getElementById('member'), document.getElementById('filter-member')], updated.members);
           setSources([document.getElementById('source'), document.getElementById('filter-source')], updated.sources);
+          try { await persistBudgetMetaToServer(); } catch {}
         }
       }); }
       { const delBtn = li.querySelector('.del'); if (delBtn) delBtn.addEventListener('click', async () => {
@@ -215,6 +448,7 @@ export async function initApp() {
           setCategories([document.getElementById('category'), document.getElementById('filter-category')], updated.categories);
           setMembers([document.getElementById('member'), document.getElementById('filter-member')], updated.members);
           setSources([document.getElementById('source'), document.getElementById('filter-source')], updated.sources);
+          try { await persistBudgetMetaToServer(); } catch {}
         }
       }); }
       return li;
@@ -247,7 +481,7 @@ export async function initApp() {
   const filterIds = ['filter-period','filter-from','filter-to','filter-category','filter-member','filter-source'];
   filterIds.forEach((id) => {
     const el = document.getElementById(id);
-    if (el) el.addEventListener('change', () => { refresh(); });
+    if (el) el.addEventListener('change', () => { refresh({ force: true }); });
   });
   { const el = document.getElementById('export-json'); if (el) el.addEventListener('click', handleExport); }
   { const el = document.getElementById('import-json'); if (el) el.addEventListener('change', handleImport); }
@@ -277,9 +511,7 @@ export async function initApp() {
       await importFromJSON(new File([blob], 'remote.json'));
       await refresh();
       updateLastSynced();
-      const meta = await getMeta();
-      if (meta.members?.length) setMembers([document.getElementById('member'), document.getElementById('filter-member')], meta.members);
-      if (meta.sources?.length) setSources([document.getElementById('source'), document.getElementById('filter-source')], meta.sources);
+      await syncBudgetMetaDown();
       if (syncEl) syncEl.textContent = 'ok';
     } catch (e) { console.error(e); alert('Не удалось загрузить с сервера'); }
   }); }
@@ -300,7 +532,8 @@ export async function initApp() {
       const serverItems = [...created, ...duplicates, ...updated];
       // Удаляем локальные копии (по clientId), импортируем версии с server IDs
       try {
-        for (const map of mapping) { if (map?.clientId != null) { try { await deleteTransaction(map.clientId); } catch {} } }
+        // При маппинге, удаляем локальные клоны полностью (hard delete), чтобы не мешали tombstones
+        for (const map of mapping) { if (map?.clientId != null) { try { await removeTransaction(map.clientId); } catch {} } }
         if (Array.isArray(serverItems) && serverItems.length) {
           const blob = new Blob([JSON.stringify(serverItems)], { type: 'application/json' });
           await importFromJSON(new File([blob], 'server-push.json'));
@@ -322,6 +555,7 @@ export async function initApp() {
     const updated = await getMetaLocal();
     renderMetaLists(updated);
     setCategories([document.getElementById('category'), document.getElementById('filter-category')], updated.categories);
+    try { await persistBudgetMetaToServer(); } catch {}
   }); }
   { const el = document.getElementById('add-member'); if (el) el.addEventListener('click', async () => {
     const val = document.getElementById('new-member').value.trim();
@@ -331,6 +565,7 @@ export async function initApp() {
     const updated = await getMetaLocal();
     renderMetaLists(updated);
     setMembers([document.getElementById('member'), document.getElementById('filter-member')], updated.members);
+    try { await persistBudgetMetaToServer(); } catch {}
   }); }
   { const el = document.getElementById('add-source'); if (el) el.addEventListener('click', async () => {
     const val = document.getElementById('new-source').value.trim();
@@ -340,6 +575,7 @@ export async function initApp() {
     const updated = await getMetaLocal();
     renderMetaLists(updated);
     setSources([document.getElementById('source'), document.getElementById('filter-source')], updated.sources);
+    try { await persistBudgetMetaToServer(); } catch {}
   }); }
 
   // Режим работы: Server/Local
@@ -351,15 +587,26 @@ export async function initApp() {
       setMode(modeSelect.value);
       if (getMode() === 'local') {
         try { clearInterval(window.__pullInterval); } catch {}
+        try { clearInterval(window.__metaInterval); } catch {}
         try { if (window.__eventsSub?.close) window.__eventsSub.close(); } catch {}
         const syncEl = document.getElementById('status-sync');
         if (syncEl) syncEl.textContent = 'idle';
       } else {
         startAutoSync();
+        startMetaAutoSync();
         startRealtime();
       }
     });
   }
+  // Если уже серверный режим — сразу запустим синхронизацию
+  if (getMode() === 'server') {
+    startAutoSync();
+    startMetaAutoSync();
+    startRealtime();
+  }
+  // Подключаем дополнительные обработчики аккаунта/бюджетов и авто‑push
+  try { attachAuthBudgetExtras(); } catch {}
+  try { window.addEventListener('transactions-updated', () => scheduleAutoPush()); } catch {}
 
   // --- Аккаунт и бюджеты ---
   const authStatusEl = document.getElementById('auth-status');
@@ -398,6 +645,17 @@ export async function initApp() {
         if (active) modalBudgetSelectEl.value = String(active);
         else if (list.length) modalBudgetSelectEl.value = String(list[0].id);
       }
+      // После загрузки и выбора активного бюджета сразу инициируем realtime и первичный pull
+      try {
+        if (getMode() === 'server') {
+          const budgetId = Number(localStorage.getItem('activeBudgetId'));
+          if (budgetId) {
+            startRealtime();
+            doPullOnce();
+            await syncBudgetMetaDown();
+          }
+        }
+      } catch {}
     } catch (e) { console.warn('budgets load failed', e); }
   }
 
@@ -425,10 +683,17 @@ export async function initApp() {
         }
       }
       updateAuthStatus(info);
+      // Включаем серверный режим сразу после успешной авторизации
+      try { setMode('server'); } catch {}
       const authPanelEl = document.getElementById('auth-panel');
       const authUserEl = document.getElementById('auth-user');
       if (authPanelEl && authUserEl) { authPanelEl.style.display = 'none'; authUserEl.style.display = 'flex'; }
       await populateBudgets();
+      // Немедленно подтягиваем актуальные данные и запускаем realtime
+      try { startRealtime(); } catch {}
+      try { await doPullOnce(); } catch {}
+      try { await syncBudgetMetaDown(); } catch {}
+      try { window.dispatchEvent(new CustomEvent('auth-changed', { detail: { status: 'logged_in' } })); } catch {}
     } catch (e) { console.error(e); alert('Ошибка авторизации'); }
   }); }
 
@@ -442,6 +707,7 @@ export async function initApp() {
         // Перезапустить realtime при смене бюджета
         try { startRealtime(); } catch {}
         try { doPullOnce(); } catch {}
+        try { syncBudgetMetaDown(); } catch {}
       });
     }
   } catch (e) { console.warn('budget-select listener attach failed', e); }
@@ -485,6 +751,7 @@ try {
       // Перезапустить realtime при смене бюджета (из модалки)
       try { startRealtime(); } catch {}
       try { doPullOnce(); } catch {}
+      try { syncBudgetMetaDown(); } catch {}
     });
   }
 
@@ -560,6 +827,17 @@ try {
       const authUserEl = document.getElementById('auth-user');
       if (authPanelEl && authUserEl) { authPanelEl.style.display = 'none'; authUserEl.style.display = 'flex'; }
       await populateBudgets();
+      // Инициируем первичный pull сразу, чтобы данные появились без F5
+      try {
+        if (getMode() === 'server') {
+          const budgetId = Number(localStorage.getItem('activeBudgetId'));
+          if (budgetId) {
+            startRealtime();
+            doPullOnce();
+            await syncBudgetMetaDown();
+          }
+        }
+      } catch {}
     }
   } catch (e) { /* ignore */ }
 
@@ -669,6 +947,7 @@ function attachAuthBudgetExtras() {
       const authStatusEl = document.getElementById('auth-status');
       if (authStatusEl) authStatusEl.textContent = 'Не вошли';
       if (authPanelEl && authUserEl) { authPanelEl.style.display = 'flex'; authUserEl.style.display = 'none'; }
+      try { window.dispatchEvent(new CustomEvent('auth-changed', { detail: { status: 'logged_out' } })); } catch {}
       try { await refresh(); } catch {}
     });
   }
@@ -704,7 +983,7 @@ function attachAuthBudgetExtras() {
         const id = Number(localStorage.getItem('activeBudgetId'));
         if (!id) { alert('Выберите бюджет'); return; }
         if (!confirm('Удалить бюджет и связанные данные?')) return;
-        const mod = await import('./sync.js?v=5');
+        const mod = await import('./sync.js?v=51');
         if (!mod.deleteBudget) { throw new Error('deleteBudget not available'); }
         await mod.deleteBudget(id);
         localStorage.removeItem('activeBudgetId');
@@ -724,105 +1003,54 @@ function attachAuthBudgetExtras() {
   }
 }
 
-// --- Авто‑синхронизация ---
-async function doPullOnce() {
+// --- Синхронизация метаданных справочника с сервером (привязка к бюджету) ---
+async function persistBudgetMetaToServer() {
   try {
     if (getMode() !== 'server') return;
     const token = localStorage.getItem('authToken');
     const budgetId = Number(localStorage.getItem('activeBudgetId'));
     if (!token || !budgetId) return;
-    const syncEl = document.getElementById('status-sync');
-    if (syncEl) syncEl.textContent = 'pulling';
-    const items = await pullTransactions();
-    const blob = new Blob([JSON.stringify(items)], { type: 'application/json' });
-    await importFromJSON(new File([blob], 'auto-pull.json'));
-    await refresh();
-    updateLastSynced();
-    if (syncEl) syncEl.textContent = 'ok';
-  } catch (e) { /* silent */ }
+    const meta = await getMetaLocal();
+    await putBudgetMeta(budgetId, {
+      categories: Array.isArray(meta.categories) ? meta.categories : [],
+      members: Array.isArray(meta.members) ? meta.members : [],
+      sources: Array.isArray(meta.sources) ? meta.sources : [],
+    });
+  } catch (e) { console.warn('persist meta failed', e); }
 }
 
-function scheduleAutoPush() {
-  clearTimeout(window.__pushTimer);
-  window.__pushTimer = setTimeout(async () => {
-    try {
-      if (getMode() !== 'server') return;
-      const token = localStorage.getItem('authToken');
-      const budgetId = Number(localStorage.getItem('activeBudgetId'));
-      if (!token || !budgetId) return;
-      const syncEl = document.getElementById('status-sync');
-      if (syncEl) syncEl.textContent = 'pushing';
-      const items = await getAllTransactions();
-      const toSend = Array.isArray(items) ? items.filter((it) => it.origin !== 'server') : [];
-      const result = await pushWithRetry(toSend, 3);
-      const { created = [], duplicates = [], updated = [], mapping = [] } = result || {};
-      const serverItems = [...created, ...duplicates, ...updated];
-      try {
-        for (const map of mapping) { if (map?.clientId != null) { try { await deleteTransaction(map.clientId); } catch {} } }
-        if (Array.isArray(serverItems) && serverItems.length) {
-          const blob = new Blob([JSON.stringify(serverItems)], { type: 'application/json' });
-          await importFromJSON(new File([blob], 'server-auto-push.json'));
-        }
-      } catch {}
-      updateLastSynced();
-      if (syncEl) syncEl.textContent = 'ok';
-    } catch (e) { console.warn('auto-push failed', e); }
-  }, 1500);
-}
-
-async function pushWithRetry(items, maxAttempts = 3) {
-  let attempt = 0;
-  let lastErr = null;
-  while (attempt < maxAttempts) {
-    try {
-      return await pushTransactions(items);
-    } catch (e) {
-      lastErr = e;
-      const delay = Math.pow(2, attempt) * 500; // 500ms, 1s, 2s
-      await new Promise((r) => setTimeout(r, delay));
-      attempt++;
-    }
-  }
-  if (lastErr) throw lastErr;
-  return { created: [], duplicates: [], updated: [], mapping: [] };
-}
-
-function startAutoSync() {
-  clearInterval(window.__pullInterval);
-  // мгновенный pull при старте
-  doPullOnce();
-  // и регулярный опрос каждые 5 секунд
-  window.__pullInterval = setInterval(doPullOnce, 5000);
-}
-
-// Real‑time подписка через SSE
-function startRealtime() {
+async function syncBudgetMetaDown() {
   try {
-    // Закроем предыдущую подписку, если есть
-    if (window.__eventsSub && typeof window.__eventsSub.close === 'function') {
-      try { window.__eventsSub.close(); } catch {}
-    }
+    if (getMode() !== 'server') return;
     const token = localStorage.getItem('authToken');
     const budgetId = Number(localStorage.getItem('activeBudgetId'));
-    if (getMode() !== 'server') return;
     if (!token || !budgetId) return;
-    const syncEl = document.getElementById('status-sync');
-    const es = subscribeEvents(budgetId);
-    window.__eventsSub = es;
-    es.addEventListener('hello', () => { if (syncEl) syncEl.textContent = 'live'; });
-    es.addEventListener('ping', () => { /* keep-alive */ });
-    es.addEventListener('update', async () => { try { await doPullOnce(); } catch {} });
-    es.onerror = () => { if (syncEl) syncEl.textContent = 'idle'; };
-  } catch (e) { /* ignore */ }
+    const bundle = await getBudgetMeta(budgetId);
+    // Не затираем локальные метаданные, если сервер вернул пустые списки (например, 404/нет данных)
+    const current = await getMetaLocal();
+    const merged = {
+      categories: Array.isArray(bundle.categories) && bundle.categories.length ? bundle.categories : (current.categories || []),
+      members: Array.isArray(bundle.members) && bundle.members.length ? bundle.members : (current.members || []),
+      sources: Array.isArray(bundle.sources) && bundle.sources.length ? bundle.sources : (current.sources || []),
+    };
+    await saveMetaLocal(merged);
+    const meta = await getMetaLocal();
+    setCategories([
+      document.getElementById('category'),
+      document.getElementById('filter-category'),
+    ], Array.isArray(meta.categories) && meta.categories.length ? meta.categories : []);
+    setMembers([
+      document.getElementById('member'),
+      document.getElementById('filter-member'),
+    ], Array.isArray(meta.members) && meta.members.length ? meta.members : []);
+    setSources([
+      document.getElementById('source'),
+      document.getElementById('filter-source'),
+    ], Array.isArray(meta.sources) && meta.sources.length ? meta.sources : []);
+  } catch (e) { console.warn('sync meta down failed', e); }
 }
 
-// Привязываем обработчики и авто‑push на любое обновление
-try {
-  attachAuthBudgetExtras();
-  window.addEventListener('transactions-updated', () => scheduleAutoPush());
-  startAutoSync();
-  startRealtime();
-} catch {}
+// (удалён дублирующий блок авто‑синхронизации и глобальной инициализации)
 // Хелпер: закрывать диалог по клику на фон (единственный)
 function enableDialogBackdropClose(dialog) {
   if (!dialog) return;
@@ -861,3 +1089,49 @@ try {
 } catch {}
     });
   }
+
+// --- One-time purge for budget #4 (local + server) ---
+(async () => {
+  try {
+    const doneKey = '__purge_budget_4_done';
+    const runKey = '__purge_budget_4_running';
+    if (localStorage.getItem(doneKey) === 'yes') return;
+    if (localStorage.getItem(runKey) === 'yes') return;
+    localStorage.setItem(runKey, 'yes');
+
+    // Hard delete all local transactions for budgetId=4
+    try {
+      const items = await getAllTransactions();
+      for (const it of items) {
+        if (Number(it.budgetId || 0) === 4) {
+          await removeTransaction(it.id);
+        }
+      }
+    } catch {}
+
+    // Clear activeBudgetId if it points to 4
+    try {
+      const active = Number(localStorage.getItem('activeBudgetId') || 0);
+      if (active === 4) localStorage.removeItem('activeBudgetId');
+    } catch {}
+
+    // Server-side delete of budget #4 if in server mode
+    try {
+      if (getMode() === 'server') {
+        const mod = await import('./sync.js?v=51');
+        if (mod && typeof mod.deleteBudget === 'function') {
+          await mod.deleteBudget(4);
+        }
+      }
+    } catch {}
+
+    try { await refresh({ force: true }); } catch {}
+    localStorage.setItem(doneKey, 'yes');
+    localStorage.removeItem(runKey);
+    try { window.dispatchEvent(new CustomEvent('transactions-updated')); } catch {}
+    console.log('Budget #4 purged (local+server)');
+  } catch (e) {
+    console.warn('Budget #4 purge failed', e);
+    localStorage.removeItem('__purge_budget_4_running');
+  }
+})();

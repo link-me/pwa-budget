@@ -1,5 +1,6 @@
-import { getAllTransactions } from './db.js';
-import * as charts from './charts.js?v=7';
+import { getAllTransactions } from './db.js?v=51';
+import * as charts from './charts.js?v=51';
+import { getSettings, putSettings } from './sync.js?v=51';
 
 const LS_KEY = 'budget_filters_v2';
 const TICKER_KEY = 'ticker_items_v1';
@@ -10,9 +11,70 @@ const TICKER_INTERVAL_KEY = 'ticker_interval_ms_v1';
 const COINS_LIST_KEY = 'coingecko_coins_list_v1';
 const COINS_LIST_TS_KEY = 'coingecko_coins_list_ts_v1';
 const API_PORT = 8050;
-const SERVER_ORIGIN = (typeof window !== 'undefined' && window.location && window.location.origin)
-  ? window.location.origin.replace(/:\d+$/, ':' + API_PORT)
-  : 'http://127.0.0.1:' + API_PORT;
+// For local dev, point to the API server directly; in production
+// use relative '/api' paths (empty origin) and rely on server rewrite.
+const SERVER_ORIGIN = (() => {
+  try {
+    const host = typeof window !== 'undefined' && window.location && window.location.hostname;
+    const isLocal = ['localhost', '127.0.0.1', '0.0.0.0'].includes(host || '');
+    if (isLocal) return 'http://127.0.0.1:' + API_PORT;
+    return '';
+  } catch { return ''; }
+})();
+
+// --- Server-backed settings helpers ---
+function isServerMode() {
+  try {
+    const mode = localStorage.getItem('mode');
+    const token = localStorage.getItem('authToken');
+    return mode !== 'local' && !!token;
+  } catch { return false; }
+}
+
+function readLocalTicker() {
+  const auto = localStorage.getItem(TICKER_AUTO_KEY) === '1';
+  const idsStr = localStorage.getItem(TICKER_IDS_KEY) || getDefaultIds().join(',');
+  const intervalMs = Number(localStorage.getItem(TICKER_INTERVAL_KEY) || 120000);
+  const ids = idsStr.split(',').map(s => s.trim()).filter(Boolean);
+  const items = (() => { try { const raw = localStorage.getItem(TICKER_KEY); const arr = raw?JSON.parse(raw):[]; return Array.isArray(arr)?arr.map(String):getDefaultTickerItems(); } catch { return getDefaultTickerItems(); } })();
+  const enabledMap = (() => { try { const raw = localStorage.getItem(TICKER_ENABLED_KEY); const obj = raw?JSON.parse(raw):{}; return obj && typeof obj==='object'?obj:{}; } catch { return {}; } })();
+  return { auto, ids, intervalMs, items, enabledMap };
+}
+
+function writeLocalTicker(t) {
+  try {
+    if (t) {
+      localStorage.setItem(TICKER_AUTO_KEY, t.auto ? '1' : '0');
+      localStorage.setItem(TICKER_IDS_KEY, (t.ids||[]).join(','));
+      localStorage.setItem(TICKER_INTERVAL_KEY, String(t.intervalMs || 120000));
+      if (Array.isArray(t.items)) localStorage.setItem(TICKER_KEY, JSON.stringify(t.items));
+      if (t.enabledMap && typeof t.enabledMap==='object') localStorage.setItem(TICKER_ENABLED_KEY, JSON.stringify(t.enabledMap));
+    }
+  } catch {}
+}
+
+async function syncServerTickerSettingsDown() {
+  if (!isServerMode()) return;
+  try {
+    const s = await getSettings();
+    const t = (s && s.ticker && typeof s.ticker === 'object') ? s.ticker : null;
+    if (t) writeLocalTicker({
+      auto: !!t.auto,
+      ids: Array.isArray(t.ids) ? t.ids.map(String) : getDefaultIds(),
+      intervalMs: Number(t.intervalMs || 120000),
+      items: Array.isArray(t.items) ? t.items.map(String) : undefined,
+      enabledMap: (t.enabledMap && typeof t.enabledMap==='object') ? t.enabledMap : undefined,
+    });
+  } catch { /* ignore */ }
+}
+
+async function persistServerTicker() {
+  if (!isServerMode()) return;
+  try {
+    const t = readLocalTicker();
+    await putSettings({ ticker: t });
+  } catch { /* ignore */ }
+}
 
 function getEl(id) { return document.getElementById(id); }
 
@@ -73,17 +135,29 @@ function periodRange(preset) {
 function applyFilters(items, filters) {
   const f = { ...filters };
   const range = f.preset === 'custom' ? { from: f.from || '1970-01-01', to: f.to || '9999-12-31' } : periodRange(f.preset);
+  const activeBudgetId = Number(localStorage.getItem('activeBudgetId')) || null;
   return items.filter(it => {
-    const date = (it.date || '').slice(0,10);
+    // скрываем мягко удалённые элементы
+    if (it && it.deletedAt) return false;
+    const date = (it?.date || '').slice(0,10);
     if (date && (date < range.from || date > range.to)) return false;
     if (f.category && it.category !== f.category) return false;
     if (f.member && it.member !== f.member) return false;
     if (f.source && it.source !== f.source) return false;
+    if (activeBudgetId && Number(it.budgetId || 0) !== activeBudgetId) return false;
     return true;
   });
 }
 
 function isChecked(id) { const el = getEl(id); return !!el && !!el.checked; }
+
+let __refreshChartsTimer = null;
+function scheduleRefreshCharts(delay = 120) {
+  try { if (__refreshChartsTimer) clearTimeout(__refreshChartsTimer); } catch {}
+  __refreshChartsTimer = setTimeout(() => { try { refreshCharts(); } catch {} }, Math.max(60, delay));
+}
+// Экспортируем планировщик обновления графиков глобально, чтобы другие модули могли вызывать его
+try { window.scheduleRefreshCharts = scheduleRefreshCharts; } catch {}
 
 async function refreshCharts() {
   const filters = readFilters();
@@ -93,39 +167,51 @@ async function refreshCharts() {
 
   // Ежемесячный столбчатый
   const cMonthly = getEl('chart-monthly');
-  if (cMonthly) cMonthly.style.display = isChecked('toggle-monthly') ? 'block' : 'none';
+  if (cMonthly) {
+    const on = isChecked('toggle-monthly');
+    cMonthly.classList.toggle('chart-hidden', !on);
+  }
   if (isChecked('toggle-monthly')) charts.drawMonthlyChart(cMonthly, filtered);
 
   // Категории
   const cCats = getEl('chart-categories');
-  if (cCats) cCats.style.display = isChecked('toggle-categories') ? 'block' : 'none';
+  if (cCats) {
+    const on = isChecked('toggle-categories');
+    cCats.classList.toggle('chart-hidden', !on);
+  }
   if (isChecked('toggle-categories')) charts.drawCategoryChart(cCats, filtered);
 
   // Баланс
   const cBal = getEl('chart-balance');
-  if (cBal) cBal.style.display = isChecked('toggle-balance') ? 'block' : 'none';
+  if (cBal) {
+    const on = isChecked('toggle-balance');
+    cBal.classList.toggle('chart-hidden', !on);
+  }
   if (isChecked('toggle-balance') && charts.drawBalanceChart) charts.drawBalanceChart(cBal, filtered);
 
   // Донат
   const cDonut = getEl('chart-donut');
   const dimEl = document.getElementById('donut-dimension');
   const dimension = dimEl ? dimEl.value : 'category';
-  if (cDonut) cDonut.style.display = isChecked('toggle-donut') ? 'block' : 'none';
+  if (cDonut) {
+    const on = isChecked('toggle-donut');
+    cDonut.classList.toggle('chart-hidden', !on);
+  }
   if (isChecked('toggle-donut')) charts.drawDonutChart(cDonut, filtered, dimension);
 }
 
 function bindFilters() {
   const ids = ['filter-period','filter-from','filter-to','filter-category','filter-member','filter-source','donut-dimension'];
-  ids.forEach(id => getEl(id)?.addEventListener('change', refreshCharts));
+  ids.forEach(id => getEl(id)?.addEventListener('change', () => scheduleRefreshCharts(80)));
   const toggles = ['toggle-monthly','toggle-categories','toggle-balance','toggle-donut'];
-  toggles.forEach(id => getEl(id)?.addEventListener('change', refreshCharts));
+  toggles.forEach(id => getEl(id)?.addEventListener('change', () => scheduleRefreshCharts(80)));
   getEl('clear-filters')?.addEventListener('click', () => {
     const { from, to } = periodRange('current_month');
     const presetEl = getEl('filter-period'); if (presetEl) presetEl.value = 'current_month';
     if (getEl('filter-from')) getEl('filter-from').value = from;
     if (getEl('filter-to')) getEl('filter-to').value = to;
     ['filter-category','filter-member','filter-source'].forEach(id => { const el = getEl(id); if (el) el.value = ''; });
-    refreshCharts();
+    scheduleRefreshCharts(100);
   });
 }
 
@@ -135,6 +221,81 @@ function bindOnlineStatus() {
   window.addEventListener('online', update);
   window.addEventListener('offline', update);
   update();
+}
+
+// --- Установка PWA: кнопка и модалка с подсказками ---
+let __deferredPrompt = null;
+function isIOS() { return /iphone|ipad|ipod/i.test(navigator.userAgent); }
+function isAndroid() { return /android/i.test(navigator.userAgent); }
+function isDesktop() { return !isAndroid() && !isIOS(); }
+function supportsInstallPrompt() { return '__deferredPrompt' in window || typeof __deferredPrompt === 'object'; }
+
+function bindInstallButton() {
+  const btn = document.getElementById('btn-install-app');
+  const modal = document.getElementById('install-modal');
+  const closeBtn = document.getElementById('btn-close-install-modal');
+  const confirmBtn = document.getElementById('btn-install-confirm');
+  const help = document.getElementById('install-help');
+  if (!btn) return;
+
+  // Перехватываем beforeinstallprompt и сохраняем событие
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    __deferredPrompt = e;
+    btn.style.display = 'inline-flex';
+  });
+  // iOS Safari не поддерживает beforeinstallprompt — показываем кнопку всегда с подсказкой
+  if (isIOS()) {
+    btn.style.display = 'inline-flex';
+  }
+  // Desktop: Chromium/Edge/Chrome покажут beforeinstallprompt; Firefox/desktop Safari — нет
+  if (isDesktop()) {
+    // Если раньше было установлено — можно скрыть
+    try {
+      window.addEventListener('appinstalled', () => { btn.style.display = 'none'; });
+    } catch {}
+  }
+
+  btn.addEventListener('click', () => {
+    // Открываем модалку: либо вызвать системный prompt, либо показать инструкцию
+    try {
+      if (modal?.showModal) {
+        modal.showModal();
+      } else if (modal) {
+        // Фолбэк для браузеров без поддержки <dialog>
+        modal.classList.add('is-open');
+      }
+    } catch {}
+    if (!help) return;
+    if (__deferredPrompt) {
+      help.textContent = 'Нажмите "Установить" для добавления на экран.';
+      confirmBtn?.removeAttribute('disabled');
+    } else if (isIOS()) {
+      help.innerHTML = 'iOS: откройте меню «Поделиться» и выберите «На экран домой».\nВ Safari это иконка со стрелкой вверх.';
+      confirmBtn?.setAttribute('disabled', 'disabled');
+    } else {
+      help.textContent = 'Если браузер поддерживает PWA, кнопка появится автоматически. На десктопе в Chrome/Edge смотрите иконку установки справа от адресной строки.';
+      confirmBtn?.setAttribute('disabled', 'disabled');
+    }
+  });
+
+  closeBtn?.addEventListener('click', () => { try { modal?.close(); } catch {} });
+  // Фолбэк закрытия
+  closeBtn?.addEventListener('click', () => { try { modal?.classList.remove('is-open'); } catch {} });
+  confirmBtn?.addEventListener('click', async () => {
+    if (!__deferredPrompt) return;
+    try {
+      const e = __deferredPrompt; __deferredPrompt = null;
+      const choice = await e.prompt();
+      // choice.outcome: 'accepted' | 'dismissed'
+      try { modal?.close(); modal?.classList.remove('is-open'); } catch {}
+      if (choice && choice.outcome === 'accepted') {
+        try { document.getElementById('btn-install-app').style.display = 'none'; } catch {}
+      }
+    } catch {}
+  });
+
+  // Если beforeinstallprompt уже был до загрузки скрипта — кнопка всё равно отобразится после следующего визита
 }
 
 function download(filename, dataUrl) {
@@ -194,6 +355,7 @@ function loadTickerItems() {
 
 function saveTickerItems(items) {
   try { localStorage.setItem(TICKER_KEY, JSON.stringify(items)); } catch {}
+  try { persistServerTicker(); } catch {}
 }
 
 // Видимость ручных элементов: { text: true|false }, по умолчанию true
@@ -209,6 +371,7 @@ function loadTickerEnabledMap() {
 }
 function saveTickerEnabledMap(map) {
   try { localStorage.setItem(TICKER_ENABLED_KEY, JSON.stringify(map || {})); } catch {}
+  try { persistServerTicker(); } catch {}
 }
 function getEnabledManualItems() {
   const items = loadTickerItems();
@@ -415,6 +578,7 @@ function saveTickerSettings({ auto, ids, intervalMs }) {
     localStorage.setItem(TICKER_IDS_KEY, (ids||[]).join(','));
     localStorage.setItem(TICKER_INTERVAL_KEY, String(intervalMs || 120000));
   } catch {}
+  try { persistServerTicker(); } catch {}
 }
 
 async function fetchCrypto(settings) {
@@ -518,10 +682,30 @@ function bindTickerModal() {
   const intervalEl = document.getElementById('ticker-interval');
   // убран переключатель статичных элементов
   if (openBtn && modal) {
-    openBtn.addEventListener('click', () => { try { modal.showModal(); renderTickerList(); } catch {} });
+    openBtn.addEventListener('click', () => {
+      // При открытии модалки заполняем поля актуальными значениями
+      try {
+        const sOpen = loadTickerSettings();
+        if (autoEl) autoEl.checked = !!sOpen.auto;
+        if (idsEl) idsEl.value = (sOpen.ids || []).join(',');
+        if (intervalEl) intervalEl.value = Math.round((sOpen.intervalMs || 120000) / 1000);
+      } catch {}
+      try { modal.showModal(); renderTickerList(); } catch {}
+    });
   }
   if (closeBtn && modal) {
-    closeBtn.addEventListener('click', () => { try { modal.close(); } catch {} });
+    closeBtn.addEventListener('click', () => {
+      // Сохраняем текущие значения при закрытии, даже если инпуты не триггерили change
+      try {
+        const cur = loadTickerSettings();
+        const ids = (idsEl?.value || '').split(',').map(s => s.trim()).filter(Boolean);
+        const sec = Math.max(15, Number(intervalEl?.value || 120));
+        const next = { ...cur, auto: !!autoEl?.checked, ids, intervalMs: sec * 1000 };
+        saveTickerSettings(next);
+        if (next.auto) startTickerAuto(next); else { stopTickerAuto(); renderTicker(); }
+      } catch {}
+      try { modal.close(); } catch {}
+    });
   }
   if (addBtn && input) {
     addBtn.addEventListener('click', () => {
@@ -539,12 +723,28 @@ function bindTickerModal() {
   if (autoEl) autoEl.checked = !!s.auto;
   if (idsEl) idsEl.value = s.ids.join(',');
   if (intervalEl) intervalEl.value = Math.round((s.intervalMs || 120000) / 1000);
+  // Дебаунс сохранения при вводе, чтобы не терять изменения без blur
+  let __tickerSaveTimer = null;
+  function scheduleSaveNow() {
+    try { if (__tickerSaveTimer) clearTimeout(__tickerSaveTimer); } catch {}
+    __tickerSaveTimer = setTimeout(() => {
+      try {
+        const cur = loadTickerSettings();
+        const ids = (idsEl?.value || '').split(',').map(s => s.trim()).filter(Boolean);
+        const sec = Math.max(15, Number(intervalEl?.value || 120));
+        const next = { ...cur, auto: !!autoEl?.checked, ids, intervalMs: sec * 1000 };
+        saveTickerSettings(next);
+        if (next.auto) startTickerAuto(next); else { stopTickerAuto(); renderTicker(); }
+      } catch {}
+    }, 250);
+  }
   autoEl?.addEventListener('change', () => {
     const cur = loadTickerSettings();
     const next = { ...cur, auto: !!autoEl.checked };
     saveTickerSettings(next);
     if (next.auto) startTickerAuto(next); else { stopTickerAuto(); renderTicker(); }
   });
+  idsEl?.addEventListener('input', scheduleSaveNow);
   idsEl?.addEventListener('change', () => {
     const cur = loadTickerSettings();
     const ids = (idsEl.value || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -552,6 +752,7 @@ function bindTickerModal() {
     saveTickerSettings(next);
     if (next.auto) updateCryptoTicker(next);
   });
+  intervalEl?.addEventListener('input', scheduleSaveNow);
   intervalEl?.addEventListener('change', () => {
     const sec = Math.max(15, Number(intervalEl.value || 120));
     const cur = loadTickerSettings();
@@ -561,11 +762,13 @@ function bindTickerModal() {
   });
 }
 
-function init() {
+async function init() {
   loadFilters();
   bindFilters();
   bindOnlineStatus();
   bindExport();
+  bindInstallButton();
+  await syncServerTickerSettingsDown();
   renderTicker();
   bindTickerModal();
   const s = loadTickerSettings();
@@ -577,13 +780,29 @@ function init() {
     if (getEl('filter-from')) getEl('filter-from').value = from;
     if (getEl('filter-to')) getEl('filter-to').value = to;
   }
-  // Перерисовывать графики при обновлении транзакций из других модулей
-  window.addEventListener('transactions-updated', () => { refreshCharts(); });
+  // Перерисовывать графики при обновлении транзакций из других модулей (с дебаунсом)
+  window.addEventListener('transactions-updated', () => { scheduleRefreshCharts(120); });
   refreshCharts();
+  // Перезагрузка настроек тикера при смене статуса авторизации
+  try {
+    window.addEventListener('auth-changed', async (ev) => {
+      const status = ev?.detail?.status;
+      if (status === 'logged_in') {
+        await syncServerTickerSettingsDown();
+        renderTicker();
+        const s = loadTickerSettings();
+        if (s.auto) startTickerAuto(s); else stopTickerAuto();
+      } else if (status === 'logged_out') {
+        stopTickerAuto();
+        // При выходе просто перерисуем по локальным настройкам
+        renderTicker();
+      }
+    });
+  } catch {}
 }
 
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', init);
+  document.addEventListener('DOMContentLoaded', () => { try { init(); } catch {} });
 } else {
-  init();
+  try { init(); } catch {}
 }

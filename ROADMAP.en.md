@@ -13,3 +13,7 @@ No dates.
 - CSV export
 - UI localization (RU/EN)
 - Accessibility and tests
+ - Deployment: unified `.env` to set API host and base prefix
+ - Server logs: neutral, avoid hardcoded `127.0.0.1`, show actual address
+ - Data directory: store in `projects/pwa-budget2/server/data/` (auto-created)
+ - Guide: publish static on GitHub Pages and run API on any Node hosting

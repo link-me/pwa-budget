@@ -5,7 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>PWA Budget</title>
     <link rel="manifest" href="./manifest.json" />
-    <link rel="stylesheet" href="./styles.css?v=6" />
+    <link rel="icon" href="./favicon.svg" />
+    <link rel="stylesheet" href="./styles.css?v=51\" />
     <!-- Modern charts via Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <!-- Chart.js DataLabels plugin for value labels -->
@@ -29,6 +30,13 @@
         <span class="chip">Доход: <strong id="status-income" class="pos">—</strong></span>
         <span class="chip">Расход: <strong id="status-expense" class="neg">—</strong></span>
         <span class="chip">Баланс: <strong id="status-balance" class="bal">—</strong></span>
+        <button id="btn-install-app" class="secondary icon-btn" aria-label="Установить приложение" title="Установить приложение">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 3v12"/>
+            <path d="M8 11l4 4 4-4"/>
+            <path d="M5 21h14"/>
+          </svg>
+        </button>
         <button id="btn-open-ticker-modal" class="secondary icon-btn" aria-label="Настроить тикер" title="Настроить тикер">
           <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
             <circle cx="12" cy="12" r="3"/>
@@ -87,6 +95,21 @@
     </header>
 
     <main>
+      <!-- Модалка установки PWA (подсказки для iOS/desktop) -->
+      <dialog id="install-modal" class="modal-panel">
+        <div class="modal-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <h3 style="margin:0;">Установить приложение</h3>
+          <button id="btn-close-install-modal" class="secondary icon-btn" aria-label="Закрыть" title="Закрыть">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"/><path d="M6 6 18 18"/></svg>
+          </button>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:8px;">
+          <p id="install-help" class="hint"></p>
+          <div class="modal-actions" style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button id="btn-install-confirm" class="primary">Установить</button>
+          </div>
+        </div>
+      </dialog>
       <!-- Модальное окно управления бюджетами (диалог) -->
       <dialog id="budget-modal" class="modal-panel">
         <div class="modal-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
@@ -398,7 +421,7 @@
       <small>Поддерживаются два режима: серверный (по умолчанию) и локальный. В локальном режиме данные остаются в браузере, в серверном — синхронизируются между участниками бюджета.</small>
     </footer>
 
-    <script type="module" src="./src/main.js?v=7"></script>
-    <script type="module" src="./src/extra.js?v=3"></script>
+  <script type="module" src="./src/main.js?v=51\"></script>
+  <script type="module" src="./src/extra.js?v=51\"></script>
   </body>
   </html>

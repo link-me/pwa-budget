@@ -33,14 +33,25 @@
     "expiresAt": 1762878948390
   },
   {
-    "id": 4,
-    "budgetId": 4,
+    "id": 7,
+    "budgetId": 5,
     "email": "token@local",
     "role": "editor",
     "invitedBy": 6,
     "status": "accepted",
-    "token": "b1708776453109ab737f23d79fa64e619e5ed312a108c257",
-    "createdAt": 1762281679899,
-    "expiresAt": 1762886479899
+    "token": "ea7e14369cd56a42f46b35a8a9509c0be098f7567fa61a16",
+    "createdAt": 1762411959635,
+    "expiresAt": 1763016759635
+  },
+  {
+    "id": 8,
+    "budgetId": 5,
+    "email": "token@local",
+    "role": "editor",
+    "invitedBy": 6,
+    "status": "accepted",
+    "token": "7fac00f6f7e525a13c09309e3096f3605a70406dd07dc710",
+    "createdAt": 1762446820140,
+    "expiresAt": 1763051620140
   }
 ]

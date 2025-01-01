@@ -9,14 +9,30 @@ import http from 'http';
 const app = express();
 app.use(cors());
 app.use(express.json());
+// Rewrite namespaced API (e.g., /money/api/*) to root /api/* to support subdirectory deployments
+app.use((req, res, next) => {
+  try {
+    if (typeof req.url === 'string') {
+      const m = req.url.match(/^\/(money|budget|pwa-budget)\/api(\/.*)?$/);
+      if (m) {
+        const rest = m[2] || '';
+        req.url = `/api${rest}`;
+      }
+    }
+  } catch {}
+  next();
+});
 
-const DATA_DIR = path.resolve('./projects/pwa-budget/server/data');
+// Store server data inside this project to avoid cross-project coupling
+const DATA_DIR = path.resolve('./projects/pwa-budget2/server/data');
 const FILE = path.join(DATA_DIR, 'transactions.json');
 const META_FILE = path.join(DATA_DIR, 'meta.json');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const BUDGETS_FILE = path.join(DATA_DIR, 'budgets.json');
 const INVITES_FILE = path.join(DATA_DIR, 'invitations.json');
 const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
+const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
+const BUDGET_META_FILE = path.join(DATA_DIR, 'budget_meta.json');
 
 function ensureFiles() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -29,6 +45,8 @@ function ensureFiles() {
   if (!fs.existsSync(BUDGETS_FILE)) fs.writeFileSync(BUDGETS_FILE, '[]');
   if (!fs.existsSync(INVITES_FILE)) fs.writeFileSync(INVITES_FILE, '[]');
   if (!fs.existsSync(SESSIONS_FILE)) fs.writeFileSync(SESSIONS_FILE, '[]');
+  if (!fs.existsSync(SETTINGS_FILE)) fs.writeFileSync(SETTINGS_FILE, '[]');
+  if (!fs.existsSync(BUDGET_META_FILE)) fs.writeFileSync(BUDGET_META_FILE, '{}');
 }
 ensureFiles();
 
@@ -49,6 +67,10 @@ function readInvites() { return readJSON(INVITES_FILE, []); }
 function writeInvites(arr) { writeJSON(INVITES_FILE, arr); }
 function readSessions() { return readJSON(SESSIONS_FILE, []); }
 function writeSessions(arr) { writeJSON(SESSIONS_FILE, arr); }
+function readSettings() { return readJSON(SETTINGS_FILE, []); }
+function writeSettings(arr) { writeJSON(SETTINGS_FILE, arr); }
+function readBudgetMetaStore() { return readJSON(BUDGET_META_FILE, {}); }
+function writeBudgetMetaStore(obj) { writeJSON(BUDGET_META_FILE, obj); }
 
 function makeSalt() { return crypto.randomBytes(16).toString('hex'); }
 function hashPassword(password, salt) { return crypto.createHash('sha256').update(`${salt}:${password}`).digest('hex'); }
@@ -218,6 +240,24 @@ app.get('/api/me', authMiddleware, (req, res) => {
   res.json({ user: req.user });
 });
 
+// --- Per-user Settings ---
+// Stored as array of { userId, data, updatedAt }
+app.get('/api/settings', authMiddleware, (req, res) => {
+  const all = readSettings();
+  const found = all.find(s => s.userId === req.user.id);
+  res.json(found?.data || {});
+});
+
+app.put('/api/settings', authMiddleware, (req, res) => {
+  const payload = (req.body && typeof req.body === 'object') ? req.body : {};
+  const all = readSettings();
+  const idx = all.findIndex(s => s.userId === req.user.id);
+  const row = { userId: req.user.id, data: payload, updatedAt: Date.now() };
+  if (idx >= 0) all[idx] = row; else all.push(row);
+  writeSettings(all);
+  res.json(row.data);
+});
+
 // --- Budgets ---
 app.get('/api/budgets', authMiddleware, (req, res) => {
   const budgets = readBudgets().filter(b => b.ownerId === req.user.id || (Array.isArray(b.members) && b.members.some(m => m.userId === req.user.id)));
@@ -288,6 +328,40 @@ app.get('/api/budgets/:id', authMiddleware, (req, res) => {
   const budget = getBudgetIfMember(req.params.id, req.user.id);
   if (!budget) return res.status(404).json({ error: 'not_found' });
   res.json(budget);
+});
+
+// --- Budget metadata (categories/members/sources) ---
+// Stored as a map { [budgetId]: { categories:[], members:[], sources:[], updatedAt } }
+app.get('/api/budgets/:id/meta', authMiddleware, (req, res) => {
+  const budgetId = Number(req.params.id);
+  const budget = getBudgetIfMember(budgetId, req.user.id);
+  if (!budget) return res.status(403).json({ error: 'forbidden' });
+  const store = readBudgetMetaStore();
+  const bundle = store[String(budgetId)] || {};
+  res.json({
+    categories: Array.isArray(bundle.categories) ? bundle.categories : [],
+    members: Array.isArray(bundle.members) ? bundle.members : [],
+    sources: Array.isArray(bundle.sources) ? bundle.sources : [],
+    updatedAt: bundle.updatedAt || 0,
+  });
+});
+
+app.put('/api/budgets/:id/meta', authMiddleware, (req, res) => {
+  const budgetId = Number(req.params.id);
+  const budget = getBudgetIfMember(budgetId, req.user.id);
+  if (!budget) return res.status(403).json({ error: 'forbidden' });
+  const payload = (req.body && typeof req.body === 'object') ? req.body : {};
+  const next = {
+    categories: Array.isArray(payload.categories) ? payload.categories : [],
+    members: Array.isArray(payload.members) ? payload.members : [],
+    sources: Array.isArray(payload.sources) ? payload.sources : [],
+    updatedAt: Date.now(),
+  };
+  const store = readBudgetMetaStore();
+  store[String(budgetId)] = next;
+  writeBudgetMetaStore(store);
+  try { broadcastBudget(budgetId, 'update', { budgetId, op: 'meta' }); } catch {}
+  res.json(next);
 });
 
 app.post('/api/budgets/:id/members', authMiddleware, (req, res) => {
@@ -467,6 +541,13 @@ app.delete('/api/transactions/:id', authMiddleware, (req, res) => {
 });
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 8050;
-app.listen(PORT, () => {
-  console.log(`PWA Budget API listening on http://127.0.0.1:${PORT}`);
+const srv = app.listen(PORT, () => {
+  try {
+    const addr = srv.address();
+    const host = (addr && typeof addr === 'object' && addr.address) ? addr.address : '0.0.0.0';
+    const shownHost = host === '::' ? '0.0.0.0' : host;
+    console.log(`PWA Budget API listening on port ${PORT} (host ${shownHost})`);
+  } catch {
+    console.log(`PWA Budget API listening on port ${PORT}`);
+  }
 });
