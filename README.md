@@ -22,7 +22,7 @@
 - Информационный тикер с автообновлением данных криптовалют через локальный прокси CoinGecko.
 - Справочники (редактируемые): категории, участники, источники.
 
-**Кратко о PWA-Budget2 (описание репозитория)**
+**Кратко о PWA Budget (описание репозитория)**
 - PWA для учёта бюджета с офлайн‑режимом, совместной работой и графиками.
 - Локальный IndexedDB, серверная синхронизация (Express + REST/SSE), импорт/экспорт.
 - Готово к публикации и запуску API на любом Node‑хостинге.
@@ -34,22 +34,22 @@
 
 **Быстрый запуск**
 - Windows/PowerShell:
-  - API: `PowerShell ./projects/pwa-budget2/server/run.ps1 -Port 8050`
-  - Статика: `PowerShell ./projects/pwa-budget2/dev-server.ps1 -Port 9090`
-  - Открыть `http://127.0.0.1:9090/projects/pwa-budget2/`
+  - API: `PowerShell ./projects/pwa-budget/server/run.ps1 -Port 8050`
+  - Статика: `PowerShell ./projects/pwa-budget/dev-server.ps1 -Port 9090`
+  - Открыть `http://127.0.0.1:9090/projects/pwa-budget/`
 - Node.js:
-  - API: `cd projects/pwa-budget2/server && npm install && npm start`
-  - Статика: `node projects/pwa-budget2/dev-server.js` или `npx http-server -p 9090 -c-1 -a 127.0.0.1 projects/pwa-budget2`
+  - API: `cd projects/pwa-budget/server && npm install && npm start`
+  - Статика: `node projects/pwa-budget/dev-server.js` или `npx http-server -p 9090 -c-1 -a 127.0.0.1 projects/pwa-budget`
 - PWA: Service Worker (в проде) регистрируется автоматически; ассеты кешируются, данные — в IndexedDB.
 
 **Развёртывание где угодно**
 - (статическая часть):
-  - Скопируйте содержимое `projects/pwa-budget2/` в любую директорию.
+  - Скопируйте содержимое `projects/pwa-budget/` в любую директорию.
   - Приложение работает офлайн. Для серверных функций (регистрация, бюджеты, синхронизация, тикер‑прокси) укажите API‑хост (см. ниже).
 - Сервер API (Express):
-  - Запустите `projects/pwa-budget2/server/` на любом Node‑хостинге.
+  - Запустите `projects/pwa-budget/server/` на любом Node‑хостинге.
   - Переменная окружения: `PORT` (по умолчанию `8050`).
-  - Данные сохраняются в `projects/pwa-budget2/server/data/` (создаётся автоматически).
+  - Данные сохраняются в `projects/pwa-budget/server/data/` (создаётся автоматически).
 - Автонастройка API‑URL:
   - В проде клиент подхватывает `window.location.origin` и путь `/api/*` (включая вариант подкаталога `/money/api/*`).
   - На localhost по умолчанию используется `http://127.0.0.1:8050`.

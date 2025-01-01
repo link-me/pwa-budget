@@ -24,7 +24,7 @@ app.use((req, res, next) => {
 });
 
 // Store server data inside this project to avoid cross-project coupling
-const DATA_DIR = path.resolve('./projects/pwa-budget2/server/data');
+const DATA_DIR = path.resolve('./projects/pwa-budget/server/data');
 const FILE = path.join(DATA_DIR, 'transactions.json');
 const META_FILE = path.join(DATA_DIR, 'meta.json');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
