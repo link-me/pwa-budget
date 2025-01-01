@@ -1,36 +1,46 @@
 # PWA Budget
 
-Стек: Vanilla JS + IndexedDB + Service Worker (PWA)
+Учёт доходов и расходов с офлайн‑режимом, аналитикой и синхронизацией через локальный API.
 
-Приложение для учёта доходов и расходов, работает оффлайн и хранит данные локально в IndexedDB. Позволяет добавлять транзакции (доход/расход), указывать категорию, дату и комментарий, фильтровать по категориям и датам, видеть итоги (доходы/расходы/баланс), а также импортировать и экспортировать данные в JSON.
+**Возможности**
+- CRUD транзакций с атрибутами (категория, участник, источник, дата, комментарий, сумма).
+- Фильтрация по периодам и метаданным; сводные итоги (доход/расход/баланс).
+- Аналитика на Chart.js: месячная динамика, расходы по категориям, распределение по измерению.
+- Импорт/экспорт данных (JSON, CSV), экспорт графиков (PNG).
+- Два режима: локальный (IndexedDB, PWA) и серверный (REST + SSE) с бюджетами и приглашениями.
+- Информационный тикер с автообновлением данных криптовалют через локальный прокси CoinGecko.
 
-## Возможности
-- Оффлайн-режим: кеширование ассетов, данные в IndexedDB
-- Добавление транзакций: сумма, тип, категория, комментарий, дата
-- Фильтры: категория и диапазон дат
-- Итоги: доходы, расходы, баланс
-- Импорт/экспорт: JSON-файл
+**Технологии**
+- Фронтенд: Vanilla JS (ES‑modules), IndexedDB, Chart.js, PWA (Service Worker + Web Manifest).
+- Бэкенд: Node.js + Express, хранение в JSON‑файлах, REST API, Server‑Sent Events, CoinGecko‑прокси.
+- Синхронизация: bulk‑операции, идемпотентность по хэшу содержимого и параметрам сделки, авто‑push.
 
-## Запуск локально
-1. Откройте директорию `projects/pwa-budget`
-2. Запустите любой статический сервер (например, Python):
-   - `python -m http.server 8042`
-3. Откройте в браузере `http://127.0.0.1:8042/projects/pwa-budget/`
+**Установка и запуск**
+- Windows/PowerShell:
+  - API: `PowerShell ./projects/pwa-budget/server/run.ps1 -Port 8050`
+  - Статика: `PowerShell ./projects/pwa-budget/dev-server.ps1 -Port 9090`
+  - Открыть `http://127.0.0.1:9090/projects/pwa-budget/`
+- Node.js:
+  - API: `cd projects/pwa-budget/server && npm install && npm start`
+  - Статика: `node projects/pwa-budget/dev-server.js` или `npx http-server -p 9090 -c-1 -a 127.0.0.1 projects/pwa-budget`
+- PWA: Service Worker регистрируется (в проде); ассеты кешируются, данные — в IndexedDB.
 
-PWA-манифест подключён, Service Worker регистрируется автоматически при загрузке. Данные сохраняются в IndexedDB и доступны оффлайн.
+**Архитектура**
+- `src/app.js` — бизнес‑логика, фильтрация, итоги, интеграция графиков и синхронизации.
+- `src/ui.js` — рендер списка транзакций и итогов.
+- `src/charts.js` — построение графиков (Chart.js).
+- `src/db.js` — IndexedDB: CRUD и хранение метаданных.
+- `src/sync.js` — клиент REST/SSE: авторизация, бюджеты, транзакции, события.
+- `src/extra.js` — фильтры аналитики, экспорт, тикер.
+- `service-worker.js` — кеширование ассетов и офлайн‑режим.
+- `server/index.js` — Express API: бюджеты, пользователи, транзакции, SSE, CoinGecko‑прокси.
 
-## Структура
-- `index.html` — страница приложения
-- `styles.css` — стили
-- `manifest.json` — веб-манифест PWA
-- `service-worker.js` — оффлайн-кеширование ассетов
-- `src/db.js` — модуль IndexedDB (CRUD, импорт/экспорт)
-- `src/ui.js` — рендер и работа с DOM
-- `src/app.js` — логика приложения и обработчики
-- `src/main.js` — инициализация и регистрация SW
+**API**
+- Авторизация: `POST /api/register`, `POST /api/login`, `GET /api/me`.
+- Бюджеты: `GET/POST/PUT/DELETE /api/budgets`, приглашения: `POST /api/budgets/:id/members`, `POST /api/invitations/:token/accept`.
+- Транзакции (bulk): `POST /api/transactions/bulk` (идемпотентность, дедупликация, маппинг идентификаторов).
+- События (SSE): `GET /api/events?budgetId=...&token=...`.
+- Крипто‑прокси: `GET /api/crypto/coins-list`, `GET /api/crypto/simple-price?...`.
 
-## Roadmap
-См. `ROADMAP.md` (RU) и `ROADMAP.en.md` (EN).
-
-## Лицензия
+**Лицензия**
 MIT

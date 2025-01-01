@@ -5,17 +5,193 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>PWA Budget</title>
     <link rel="manifest" href="./manifest.json" />
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles.css?v=6" />
+    <!-- Modern charts via Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <!-- Chart.js DataLabels plugin for value labels -->
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
   </head>
   <body>
     <header>
-      <h1>PWA Budget</h1>
-      <p>Оффлайн учёт доходов и расходов (IndexedDB)</p>
+      <div class="brand-row">
+        <div class="crest">WS</div>
+        <div class="titles">
+          <h1>PWA Budget</h1>
+          <p>Wall Street Edition • Учёт доходов и расходов (IndexedDB + серверная синхронизация)</p>
+        </div>
+      </div>
+      <div class="admin-bar">
+        <span class="chip">Mode: <strong id="status-mode">server</strong></span>
+        <span class="chip">Online: <strong id="status-online">offline</strong></span>
+        <span class="chip">Sync: <strong id="status-sync">idle</strong></span>
+        <span class="chip">Last: <strong id="status-last">—</strong></span>
+        <span class="chip">Records: <strong id="status-count">—</strong></span>
+        <span class="chip">Доход: <strong id="status-income" class="pos">—</strong></span>
+        <span class="chip">Расход: <strong id="status-expense" class="neg">—</strong></span>
+        <span class="chip">Баланс: <strong id="status-balance" class="bal">—</strong></span>
+        <button id="btn-open-ticker-modal" class="secondary icon-btn" aria-label="Настроить тикер" title="Настроить тикер">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c0 .66.38 1.26.97 1.54.21.1.43.16.66.16H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+        </button>
+      </div>
+      <div class="admin-controls" style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:8px;">
+        <!-- Минималистичная панель входа/регистрации -->
+        <div id="auth-panel" style="display:flex; gap:6px; align-items:center;">
+          <input id="auth-email" type="email" placeholder="email" />
+          <input id="auth-password" type="password" placeholder="пароль" />
+          <button id="btn-auth" class="primary icon-btn" aria-label="Войти / Регистрация" title="Войти / Регистрация">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>
+              <path d="M10 17l5-5-5-5"/>
+              <path d="M15 12H3"/>
+            </svg>
+          </button>
+        </div>
+        <div id="auth-user" style="display:none; gap:6px; align-items:center;">
+          <span id="auth-status" class="chip">Не вошли</span>
+          <button id="btn-logout" class="secondary icon-btn" aria-label="Выход" title="Выход">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+              <path d="M16 17l5-5-5-5"/>
+              <path d="M21 12H9"/>
+            </svg>
+          </button>
+        </div>
+
+        <!-- Бюджеты: выбор + компактное управление -->
+        <label style="display:flex; align-items:center; gap:6px;">
+          Бюджет
+          <select id="budget-select"></select>
+        </label>
+        <button id="btn-open-budget-modal" class="secondary icon-btn" aria-label="Бюджеты" title="Бюджеты">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M3 7h5l2 2h11v10a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2z"/>
+          </svg>
+        </button>
+
+        <!-- Совместная работа: открыть модальное окно -->
+        <button id="btn-open-collab-modal" class="secondary icon-btn" aria-label="Совместная работа" title="Совместная работа">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="8" cy="9" r="3"/>
+            <circle cx="16" cy="9" r="3"/>
+            <path d="M2 20c0-3 3-5 6-5s6 2 6 5"/>
+            <path d="M10 20c0-3 3-5 6-5s6 2 6 5"/>
+          </svg>
+        </button>
+      </div>
+      <div class="ticker" aria-label="Wall Street Ticker">
+        <div id="ticker-marquee" class="marquee"></div>
+      </div>
     </header>
 
     <main>
+      <!-- Модальное окно управления бюджетами (диалог) -->
+      <dialog id="budget-modal" class="modal-panel">
+        <div class="modal-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <h3 style="margin:0;">Бюджеты</h3>
+          <button id="btn-close-budget-modal" class="secondary icon-btn" aria-label="Закрыть" title="Закрыть">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"/><path d="M6 6 18 18"/></svg>
+          </button>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:10px;">
+          <label style="display:flex; gap:6px; align-items:center;">
+            Текущий: <select id="modal-budget-select"></select>
+          </label>
+          <input id="new-budget-name" type="text" placeholder="Название / новое имя" />
+          <div class="modal-actions" style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button id="btn-create-budget" class="primary icon-btn" aria-label="Создать" title="Создать">
+              <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+            </button>
+            <button id="btn-rename-budget" class="secondary icon-btn" aria-label="Переименовать" title="Переименовать">
+              <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5l4 4-11 11H5.5v-4z"/></svg>
+            </button>
+            <button id="btn-delete-budget" class="danger icon-btn" aria-label="Удалить" title="Удалить">
+              <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+            </button>
+          </div>
+        </div>
+      </dialog>
+
+      <!-- Модальное окно совместной работы (диалог) -->
+      <dialog id="collab-modal" class="modal-panel">
+        <div class="modal-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <h3 style="margin:0;">Совместная работа</h3>
+          <button id="btn-close-collab-modal" class="secondary icon-btn" aria-label="Закрыть" title="Закрыть">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"/><path d="M6 6 18 18"/></svg>
+          </button>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:10px;">
+          <label style="display:flex; gap:6px; align-items:center;">
+            <span style="min-width:120px;">Пригласить по email</span>
+            <input id="invite-email" type="email" placeholder="email" />
+            <button id="btn-invite" class="primary icon-btn" aria-label="Пригласить" title="Пригласить">
+              <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>
+            </button>
+          </label>
+          <label style="display:flex; gap:6px; align-items:center;">
+            <span style="min-width:120px;">Сгенерировать токен</span>
+            <button id="btn-gen-invite" class="secondary icon-btn" aria-label="Сгенерировать" title="Сгенерировать">
+              <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a5 5 0 0 1 0-7l2-2a5 5 0 0 1 7 7l-2 2"/><path d="M14 11a5 5 0 0 1 0 7l-2 2a5 5 0 0 1-7-7l2-2"/></svg>
+            </button>
+          </label>
+          <label style="display:flex; gap:6px; align-items:center;">
+            <span style="min-width:120px;">Принять приглашение</span>
+            <input id="invite-token" type="text" placeholder="токен" />
+            <button id="btn-accept-invite" class="secondary icon-btn" aria-label="Принять" title="Принять">
+              <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>
+            </button>
+          </label>
+        </div>
+      </dialog>
+      
+      <!-- Модальное окно настроек тикера -->
+      <dialog id="ticker-modal" class="modal-panel">
+        <div class="modal-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <h3 style="margin:0;">Настройки тикера</h3>
+          <button id="btn-close-ticker-modal" class="secondary icon-btn" aria-label="Закрыть" title="Закрыть">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"/><path d="M6 6 18 18"/></svg>
+          </button>
+        </div>
+        <div style="display:flex; gap:12px; flex-wrap:wrap;">
+          <div style="flex:1; min-width:280px;">
+            <h4 style="margin:6px 0;">Элементы</h4>
+            <ul id="ticker-list" class="meta-list"></ul>
+          </div>
+          <div style="flex:1; min-width:280px;">
+            <h4 style="margin:6px 0;">Добавить</h4>
+            <label style="display:flex; align-items:center; gap:6px;">
+              <input id="ticker-new" type="text" class="grow" placeholder="например: AAPL +1.2%" />
+              <button id="ticker-add" class="primary">Добавить</button>
+            </label>
+          </div>
+          <div style="flex:1; min-width:280px;">
+            <h4 style="margin:6px 0;">Автообновление (крипто, без ключей)</h4>
+            <div class="row" style="gap:6px; align-items:center;">
+              <label style="display:flex; align-items:center; gap:6px;">
+                <input id="ticker-auto" type="checkbox" /> Включить автообновление
+              </label>
+            </div>
+            <div class="row" style="gap:6px; align-items:center;">
+              <label class="grow">
+                Монеты (ids через запятую)
+                <input id="ticker-ids" type="text" placeholder="bitcoin,ethereum,solana,toncoin" />
+              </label>
+              <label>
+                Интервал (сек)
+                <input id="ticker-interval" type="number" min="15" step="15" value="120" />
+              </label>
+            </div>
+            <div class="row" style="gap:6px; align-items:center; margin-top:6px;">
+            </div>
+            <small class="hint">Источник: api.coingecko.com (public), отображается цена USD и изменение за 24ч</small>
+          </div>
+        </div>
+      </dialog>
       <section class="add-form">
-        <h2>Добавить транзакцию</h2>
+        <details open>
+          <summary>Добавить транзакцию</summary>
         <form id="transaction-form">
           <div class="row">
             <label>
@@ -33,6 +209,14 @@
               Категория
               <select id="category"></select>
             </label>
+            <label>
+              Член семьи
+              <select id="member"></select>
+            </label>
+            <label>
+              Источник
+              <select id="source"></select>
+            </label>
           </div>
           <div class="row">
             <label class="grow">
@@ -45,18 +229,39 @@
             </label>
           </div>
           <div class="actions">
-            <button type="submit">Добавить</button>
+            <button type="submit" class="primary">Добавить</button>
             <button type="reset" class="secondary">Очистить</button>
           </div>
         </form>
+        </details>
       </section>
 
       <section class="filters">
-        <h2>Фильтры</h2>
+        <details open>
+          <summary>Фильтры</summary>
         <div class="row">
+          <label>
+            Период
+            <select id="filter-period">
+              <option value="current_month" selected>Текущий месяц</option>
+              <option value="months3">Последние 3 месяца</option>
+              <option value="months6">Последние 6 месяцев</option>
+              <option value="ytd">С начала года</option>
+              <option value="all">Все</option>
+              <option value="custom">Выбрать вручную</option>
+            </select>
+          </label>
           <label>
             Категория
             <select id="filter-category"></select>
+          </label>
+          <label>
+            Член семьи
+            <select id="filter-member"></select>
+          </label>
+          <label>
+            Источник
+            <select id="filter-source"></select>
           </label>
           <label>
             С даты
@@ -66,41 +271,134 @@
             По дату
             <input id="filter-to" type="date" />
           </label>
-          <button id="clear-filters" class="secondary">Сбросить</button>
+          <button id="clear-filters" class="secondary icon-btn" aria-label="Сбросить" title="Сбросить">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6"/><path d="M3 4v6h6"/></svg>
+          </button>
         </div>
+        </details>
       </section>
 
       <section class="summary">
-        <h2>Итоги</h2>
+        <details open>
+          <summary>Итоги</summary>
+        <div class="row">
+          <label><input type="checkbox" id="toggle-monthly" checked /> Месячная динамика</label>
+          <label><input type="checkbox" id="toggle-categories" checked /> Расходы по категориям</label>
+          <label><input type="checkbox" id="toggle-balance" /> Баланс во времени</label>
+          <label><input type="checkbox" id="toggle-donut" checked /> Донат‑диаграмма</label>
+          <label>
+            Срез для доната
+            <select id="donut-dimension">
+              <option value="category" selected>Категория</option>
+              <option value="member">Член семьи</option>
+              <option value="source">Источник</option>
+            </select>
+          </label>
+        </div>
         <div class="grid">
           <div class="card"><span>Доходы</span><strong id="sum-income">0</strong></div>
           <div class="card"><span>Расходы</span><strong id="sum-expense">0</strong></div>
           <div class="card"><span>Баланс</span><strong id="sum-balance">0</strong></div>
         </div>
+        <canvas id="chart-monthly" width="900" height="220"></canvas>
+        <h3>Статистика по категориям</h3>
+        <canvas id="chart-categories" width="900" height="260"></canvas>
+        <h3>Баланс во времени</h3>
+        <canvas id="chart-balance" width="900" height="220"></canvas>
+        <h3>Донат‑диаграмма</h3>
+        <canvas id="chart-donut" width="900" height="260"></canvas>
+        <div class="tools" style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;">
+          <button id="export-png" class="secondary icon-btn" aria-label="Экспорт PNG" title="Экспорт PNG">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8" cy="12" r="3"/><path d="M13 12l3 3 3-3"/></svg>
+          </button>
+          <button id="export-csv" class="secondary icon-btn" aria-label="Экспорт CSV" title="Экспорт CSV">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h10l6 6v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/><path d="M14 4v6h6"/><path d="M7 15h6"/><path d="M7 19h10"/></svg>
+          </button>
+        </div>
+        </details>
       </section>
 
       <section class="list">
-        <h2>Транзакции</h2>
+        <details open>
+          <summary>Транзакции</summary>
         <ul id="transactions"></ul>
+        </details>
+      </section>
+
+      <section class="meta">
+        <details id="meta-details">
+          <summary>Справочники</summary>
+          <div class="grid">
+          <div class="card" style="display:block">
+            <h3>Категории</h3>
+            <div class="row">
+              <input id="new-category" type="text" placeholder="Новая категория" />
+              <button id="add-category" class="primary">Добавить</button>
+            </div>
+            <ul id="list-categories" class="meta-list"></ul>
+          </div>
+          <div class="card" style="display:block">
+            <h3>Члены семьи</h3>
+            <div class="row">
+              <input id="new-member" type="text" placeholder="Новый член" />
+              <button id="add-member" class="primary">Добавить</button>
+            </div>
+            <ul id="list-members" class="meta-list"></ul>
+          </div>
+          <div class="card" style="display:block">
+            <h3>Источники</h3>
+            <div class="row">
+              <input id="new-source" type="text" placeholder="Новый источник" />
+              <button id="add-source" class="primary">Добавить</button>
+            </div>
+            <ul id="list-sources" class="meta-list"></ul>
+          </div>
+          </div>
+        </details>
       </section>
 
       <section class="tools">
-        <h2>Импорт/Экспорт</h2>
+        <details open>
+          <summary>Импорт/Экспорт</summary>
         <div class="row">
-          <button id="export-json">Экспорт JSON</button>
+          <button id="export-json" class="primary">Экспорт JSON</button>
+          <button id="export-png-monthly" class="secondary">PNG: месячный график</button>
+          <button id="export-png-categories" class="secondary">PNG: категории</button>
+          <button id="export-png-balance" class="secondary">PNG: баланс</button>
+          <button id="export-png-donut" class="secondary">PNG: донат</button>
+          <button id="export-csv" class="primary">Экспорт CSV</button>
           <label class="import-label">
             Импорт JSON
             <input id="import-json" type="file" accept="application/json" />
           </label>
           <button id="clear-all" class="danger">Очистить всё</button>
         </div>
+        <h3>Онлайн‑синхронизация</h3>
+        <div class="row" style="gap:8px; align-items:center; flex-wrap:wrap;">
+          <button id="sync-pull" class="secondary">Pull (загрузить с сервера)</button>
+          <button id="sync-push" class="primary">Push (выгрузить на сервер)</button>
+          <small class="hint">API: http://127.0.0.1:8050 • автосинхронизация и realtime включены в серверном режиме</small>
+        </div>
+        <h3>Режим работы</h3>
+        <div class="row" style="gap:8px; align-items:center; flex-wrap:wrap;">
+          <label style="display:flex; align-items:center; gap:6px;">Режим
+            <select id="mode-select">
+              <option value="server" selected>Серверный (по умолчанию)</option>
+              <option value="local">Локальный</option>
+            </select>
+          </label>
+          <button id="seed-demo" class="primary">Заполнить демо‑данные</button>
+          <small class="hint">Локальный режим хранит данные только в браузере (IndexedDB)</small>
+        </div>
+        </details>
       </section>
     </main>
 
     <footer>
-      <small>Работает оффлайн. Данные сохраняются локально в браузере.</small>
+      <small>Поддерживаются два режима: серверный (по умолчанию) и локальный. В локальном режиме данные остаются в браузере, в серверном — синхронизируются между участниками бюджета.</small>
     </footer>
 
-    <script type="module" src="./src/main.js"></script>
+    <script type="module" src="./src/main.js?v=7"></script>
+    <script type="module" src="./src/extra.js?v=3"></script>
   </body>
   </html>

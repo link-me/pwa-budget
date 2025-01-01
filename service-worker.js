@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pwa-budget-v1';
+const CACHE_NAME = 'pwa-budget-v2';
 const ASSETS = [
   './index.html',
   './styles.css',
@@ -7,6 +7,9 @@ const ASSETS = [
   './src/app.js',
   './src/ui.js',
   './src/db.js',
+  './src/charts.js',
+  './src/extra.js',
+  './src/sync.js',
 ];
 
 self.addEventListener('install', (event) => {

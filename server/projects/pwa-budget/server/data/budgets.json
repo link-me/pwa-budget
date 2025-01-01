@@ -1,0 +1,58 @@
+[
+  {
+    "id": 1,
+    "name": "Main",
+    "ownerId": 1,
+    "members": [
+      {
+        "userId": 2,
+        "role": "editor"
+      },
+      {
+        "userId": 1,
+        "role": "editor"
+      }
+    ],
+    "createdAt": 1762272849971
+  },
+  {
+    "id": 2,
+    "name": "main2",
+    "ownerId": 1,
+    "members": [
+      {
+        "userId": 2,
+        "role": "editor"
+      }
+    ],
+    "createdAt": 1762273016638
+  },
+  {
+    "id": 3,
+    "name": "Main",
+    "ownerId": 3,
+    "members": [
+      {
+        "userId": 5,
+        "role": "editor"
+      }
+    ],
+    "createdAt": 1762274136764
+  },
+  {
+    "id": 4,
+    "name": "Grow",
+    "ownerId": 6,
+    "members": [
+      {
+        "userId": 6,
+        "role": "editor"
+      },
+      {
+        "userId": 7,
+        "role": "editor"
+      }
+    ],
+    "createdAt": 1762281670254
+  }
+]
