@@ -1,27 +1,11 @@
-﻿console.log('Demo start');
-// Update dependencies
-// Setup CI
-// Code cleanup
-// Fix auth bug
-// Improve performance
-// Refactor module
-// Code cleanup
-// Enhance logging
-// Setup CI
-// Improve performance
-// Enhance logging
-// Refactor module
-// Add feature
-// Enhance logging
-// Add tests
-// Update dependencies
-// Fix auth bug
-// Update docs
-// Add feature
-// Add feature
-// Improve performance
-// Improve performance
-// Add feature
-// Add tests
-// Update dependencies
-// Add tests
+import { initApp } from './app.js';
+
+// Инициализация приложения
+initApp();
+
+// Регистрация Service Worker
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./service-worker.js').catch(console.error);
+  });
+}

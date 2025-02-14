@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PWA Budget</title>
+    <link rel="manifest" href="./manifest.json" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>PWA Budget</h1>
+      <p>Оффлайн учёт доходов и расходов (IndexedDB)</p>
+    </header>
+
+    <main>
+      <section class="add-form">
+        <h2>Добавить транзакцию</h2>
+        <form id="transaction-form">
+          <div class="row">
+            <label>
+              Тип
+              <select id="type">
+                <option value="expense">Расход</option>
+                <option value="income">Доход</option>
+              </select>
+            </label>
+            <label>
+              Сумма
+              <input id="amount" type="number" step="0.01" min="0" required />
+            </label>
+            <label>
+              Категория
+              <select id="category"></select>
+            </label>
+          </div>
+          <div class="row">
+            <label class="grow">
+              Комментарий
+              <input id="note" type="text" placeholder="по желанию" />
+            </label>
+            <label>
+              Дата
+              <input id="date" type="date" />
+            </label>
+          </div>
+          <div class="actions">
+            <button type="submit">Добавить</button>
+            <button type="reset" class="secondary">Очистить</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="filters">
+        <h2>Фильтры</h2>
+        <div class="row">
+          <label>
+            Категория
+            <select id="filter-category"></select>
+          </label>
+          <label>
+            С даты
+            <input id="filter-from" type="date" />
+          </label>
+          <label>
+            По дату
+            <input id="filter-to" type="date" />
+          </label>
+          <button id="clear-filters" class="secondary">Сбросить</button>
+        </div>
+      </section>
+
+      <section class="summary">
+        <h2>Итоги</h2>
+        <div class="grid">
+          <div class="card"><span>Доходы</span><strong id="sum-income">0</strong></div>
+          <div class="card"><span>Расходы</span><strong id="sum-expense">0</strong></div>
+          <div class="card"><span>Баланс</span><strong id="sum-balance">0</strong></div>
+        </div>
+      </section>
+
+      <section class="list">
+        <h2>Транзакции</h2>
+        <ul id="transactions"></ul>
+      </section>
+
+      <section class="tools">
+        <h2>Импорт/Экспорт</h2>
+        <div class="row">
+          <button id="export-json">Экспорт JSON</button>
+          <label class="import-label">
+            Импорт JSON
+            <input id="import-json" type="file" accept="application/json" />
+          </label>
+          <button id="clear-all" class="danger">Очистить всё</button>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <small>Работает оффлайн. Данные сохраняются локально в браузере.</small>
+    </footer>
+
+    <script type="module" src="./src/main.js"></script>
+  </body>
+  </html>

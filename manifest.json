@@ -1,0 +1,10 @@
+{
+  "name": "PWA Budget",
+  "short_name": "Budget",
+  "start_url": "/projects/pwa-budget/index.html",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "description": "Оффлайн учёт доходов и расходов на IndexedDB.",
+  "icons": []
+}
