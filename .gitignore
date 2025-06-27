@@ -1,4 +1,4 @@
-﻿node_modules/
+node_modules/
 .venv/
 venv/
 __pycache__/
@@ -8,4 +8,5 @@ bin/
 .DS_Store
 Thumbs.db
 *.log
+PRIVATE_USAGE_RU.md
 
