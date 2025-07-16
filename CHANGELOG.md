@@ -1,0 +1,21 @@
+﻿# Changelog
+
+- 2025-07-17: Update dependencies
+- 2025-07-23: Setup CI
+- 2025-07-30: Code cleanup
+- 2025-07-31: Fix auth bug
+- 2025-08-04: Improve performance
+- 2025-08-05: Refactor module
+- 2025-08-06: Code cleanup
+- 2025-08-10: Enhance logging
+- 2025-08-11: Setup CI
+- 2025-08-13: Add feature
+- 2025-08-17: Improve performance
+- 2025-08-17: Enhance logging
+- 2025-08-17: Refactor module
+- 2025-08-31: Add feature
+- 2025-09-05: Add feature
+- 2025-09-23: Enhance logging
+- 2025-09-24: Refactor module
+- 2025-10-01: Add tests
+- 2025-10-05: Add tests

@@ -1,0 +1,11 @@
+﻿node_modules/
+.venv/
+venv/
+__pycache__/
+.target/
+obj/
+bin/
+.DS_Store
+Thumbs.db
+*.log
+
