@@ -15,3 +15,4 @@
 // Enhance logging
 // Add tests
 // Update dependencies
+// Fix auth bug
