@@ -24,3 +24,4 @@
 - 2025-07-18: Update docs
 - 2025-07-28: Add feature
 - 2025-07-28: Add feature
+- 2025-07-29: Improve performance
