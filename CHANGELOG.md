@@ -27,3 +27,4 @@
 - 2025-07-29: Improve performance
 - 2025-08-03: Improve performance
 - 2025-08-14: Add feature
+- 2025-08-21: Add tests
