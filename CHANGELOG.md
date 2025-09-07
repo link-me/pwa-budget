@@ -28,3 +28,4 @@
 - 2025-08-03: Improve performance
 - 2025-08-14: Add feature
 - 2025-08-21: Add tests
+- 2025-09-07: Add tests
