@@ -30,3 +30,4 @@
 - 2025-08-21: Add tests
 - 2025-09-07: Add tests
 - 2025-09-15: Update dependencies
+- 2025-09-24: Refactor module
